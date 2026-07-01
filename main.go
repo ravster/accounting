@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	_ "github.com/lib/pq" // Pure Go Postgres driver registered anonymously
@@ -92,6 +93,49 @@ func getLedger(w http.ResponseWriter, r *http.Request) {
 	tmpl.Execute(w, entries)
 }
 
+func createTransaction(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		msg := fmt.Sprintf("Couldn't parse form: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	debitAccount := r.FormValue("debit_account")
+	creditAccount := r.FormValue("credit_account")
+	note := r.FormValue("note")
+	amount_s := r.FormValue("amount")
+
+	if debitAccount == creditAccount {
+		msg := fmt.Sprintf("debit (%s) and credit (%s) accounts MUST be different", debitAccount, creditAccount)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	amount, err := strconv.ParseFloat(amount_s, 64)
+	if err != nil {
+		msg := fmt.Sprintf("Couldn't parse float: amount (%s): %e", amount_s, err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	_, err = db.Exec(`
+		INSERT into transactions (amount, note, debit_account, credit_account)
+		VALUES ($1, $2, $3, $4)`,
+		amount, note, debitAccount, creditAccount,
+	)
+	if err != nil {
+		msg := fmt.Sprintf("Couldn't write to DB: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	http.Redirect(w, r, "/ledger", 303)
+}
+
 func main() {
 	fmt.Println("Hello world!")
 	var err error
@@ -118,6 +162,7 @@ func main() {
 
 	http.HandleFunc("GET /", homeHandler)
 	http.HandleFunc("GET /ledger", getLedger)
+	http.HandleFunc("POST /transactions", createTransaction)
 
 	log.Println("Server starting on http://localhost:3002")
 	if err := http.ListenAndServe(":3002", nil); err != nil {
