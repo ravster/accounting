@@ -1,3 +1,6 @@
+create database accounting;
+\c accounting
+
 CREATE TABLE transactions (
     id BIGSERIAL PRIMARY KEY,
     amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0.00),
