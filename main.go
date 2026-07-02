@@ -93,6 +93,47 @@ func getLedger(w http.ResponseWriter, r *http.Request) {
 	tmpl.Execute(w, entries)
 }
 
+func listAccounts(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`
+		select debit_account as account_name from transactions
+		union
+		select credit_account as account_name from transactions
+		order by account_name asc
+		`)
+	if err != nil {
+		msg := fmt.Sprintf("DB err: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 500)
+		return
+	}
+	defer rows.Close()
+
+	var account_names []string
+	for rows.Next() {
+		var name string
+		err := rows.Scan(&name)
+		if err != nil {
+			msg := fmt.Sprintf("Row scan err: %s", err)
+			log.Println(msg)
+			http.Error(w, msg, 500)
+			return
+		}
+		account_names = append(account_names, name)
+	}
+
+	tmplPath := filepath.Join("templates", "listAccounts.html")
+	tmpl, err := template.ParseFiles(tmplPath)
+	if err != nil {
+		msg := fmt.Sprintf("Template parsing err: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	tmpl.Execute(w, account_names)
+}
+
 func createTransaction(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		msg := fmt.Sprintf("Couldn't parse form: %s", err)
@@ -163,6 +204,11 @@ func main() {
 	http.HandleFunc("GET /", homeHandler)
 	http.HandleFunc("GET /ledger", getLedger)
 	http.HandleFunc("POST /transactions", createTransaction)
+	http.HandleFunc("GET /accounts", listAccounts)
+	// TODO
+	// Tag account as income (customers)
+	// Tag as expense (rent, Sin, NR, CamCK, EDC, water, wifi, depreciation, etc)
+	// Tag as asset (aba , cash, working-capital)
 
 	log.Println("Server starting on http://localhost:3002")
 	if err := http.ListenAndServe(":3002", nil); err != nil {
