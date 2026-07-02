@@ -14,16 +14,46 @@ import (
 	_ "github.com/lib/pq" // Pure Go Postgres driver registered anonymously
 )
 
+var db *sql.DB
+var account_names = make(map[int64]string)
+
+// Load this in-memory so we don't have to query the DB for this mapping repeatedly, and we
+// don't need the DB to do the join repeatedly. This will be run once, during program startup,
+// so if you add new accounts, restart the program. Adding new accounts is a rare operation, so
+// forcing a program restart is acceptable.
+func loadAccountNamesCache() error {
+	rows, err := db.Query(`select id, name from accounts`)
+	if err != nil {
+		msg := fmt.Sprintf("DB err: %s", err)
+		log.Println(msg)
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var name string
+		err := rows.Scan(
+			&id,
+			&name)
+		if err != nil {
+			msg := fmt.Sprintf("Row scan err: %s", err)
+			log.Println(msg)
+			return err
+		}
+		account_names[id] = name
+	}
+	return nil
+}
+
 type Transaction struct {
 	ID            int64
 	Amount        float64
 	Note          string
-	DebitAccount  string
-	CreditAccount string
+	DebitAccountId  int64
+	CreditAccountId int64
 	CreatedAt     time.Time
 }
-
-var db *sql.DB
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
 	log.Println("Serving home")
@@ -48,7 +78,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 
 func getLedger(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT id, amount, note, debit_account, credit_account, created_at
+		SELECT id, amount, note, debit_account_id, credit_account_id, created_at
 		FROM transactions
 		ORDER BY created_at DESC
 		LIMIT 30`)
@@ -67,8 +97,8 @@ func getLedger(w http.ResponseWriter, r *http.Request) {
 			&e.ID,
 			&e.Amount,
 			&e.Note,
-			&e.DebitAccount,
-			&e.CreditAccount,
+			&e.DebitAccountId,
+			&e.CreditAccountId,
 			&e.CreatedAt,
 		)
 		if err != nil {
@@ -93,13 +123,31 @@ func getLedger(w http.ResponseWriter, r *http.Request) {
 	tmpl.Execute(w, entries)
 }
 
+type Account struct {
+	ID int64
+	Name string
+	Type int
+	// enum: Income, Expense, Asset, Liability
+}
+var accountTypeNames = map[int]string {
+	0: "Income",
+	1: "Expense",
+	2: "Asset",
+	3: "Liability",
+}
+
+func formatAccountType(t int) string {
+	name, ok := accountTypeNames[t]
+	if ok {
+		return name
+	}
+	return "ERROR UNKNOWN TYPE"
+}
+
 func listAccounts(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		select debit_account as account_name from transactions
-		union
-		select credit_account as account_name from transactions
-		order by account_name asc
-		`)
+	  select id, name, type from accounts
+	`)
 	if err != nil {
 		msg := fmt.Sprintf("DB err: %s", err)
 		log.Println(msg)
@@ -108,21 +156,25 @@ func listAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var account_names []string
+	var accounts []Account
 	for rows.Next() {
-		var name string
-		err := rows.Scan(&name)
+		var acct Account
+		err := rows.Scan(&acct.ID, &acct.Name, &acct.Type)
 		if err != nil {
 			msg := fmt.Sprintf("Row scan err: %s", err)
 			log.Println(msg)
 			http.Error(w, msg, 500)
 			return
 		}
-		account_names = append(account_names, name)
+		accounts = append(accounts, acct)
+	}
+
+	funcMap := template.FuncMap{
+		"resolveType": formatAccountType,
 	}
 
 	tmplPath := filepath.Join("templates", "listAccounts.html")
-	tmpl, err := template.ParseFiles(tmplPath)
+	tmpl, err := template.New(filepath.Base(tmplPath)).Funcs(funcMap).ParseFiles(tmplPath)
 	if err != nil {
 		msg := fmt.Sprintf("Template parsing err: %s", err)
 		log.Println(msg)
@@ -131,7 +183,7 @@ func listAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.Execute(w, account_names)
+	tmpl.Execute(w, accounts)
 }
 
 func createTransaction(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +229,40 @@ func createTransaction(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ledger", 303)
 }
 
+func createAccount(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		msg := fmt.Sprintf("Couldn't parse form: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	name := r.FormValue("name")
+	type_s := r.FormValue("type")
+
+	type_i, err := strconv.ParseFloat(type_s, 64)
+	if err != nil {
+		msg := fmt.Sprintf("Couldn't parse float: type (%s): %e", type_s, err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	_, err = db.Exec(`
+		INSERT into accounts (name, type)
+		VALUES ($1, $2)`,
+		name, type_i,
+	)
+	if err != nil {
+		msg := fmt.Sprintf("Couldn't write to DB: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	http.Redirect(w, r, "/accounts", 303)
+}
+
 func main() {
 	fmt.Println("Hello world!")
 	var err error
@@ -198,13 +284,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "DB connection failed: %v\n", err)
 		return
 	}
-
 	fmt.Println("DB connection passed.")
+	loadAccountNamesCache()
 
 	http.HandleFunc("GET /", homeHandler)
 	http.HandleFunc("GET /ledger", getLedger)
 	http.HandleFunc("POST /transactions", createTransaction)
 	http.HandleFunc("GET /accounts", listAccounts)
+	http.HandleFunc("POST /accounts", createAccount)
 	// TODO
 	// Tag account as income (customers)
 	// Tag as expense (rent, Sin, NR, CamCK, EDC, water, wifi, depreciation, etc)
