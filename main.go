@@ -47,12 +47,12 @@ func loadAccountNamesCache() error {
 }
 
 type Transaction struct {
-	ID            int64
-	Amount        float64
-	Note          string
+	ID              int64
+	Amount          float64
+	Note            string
 	DebitAccountId  int64
 	CreditAccountId int64
-	CreatedAt     time.Time
+	CreatedAt       time.Time
 }
 
 func homeHandler(w http.ResponseWriter, r *http.Request) {
@@ -120,16 +120,78 @@ func getLedger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.Execute(w, entries)
+	data := map[string]interface{}{
+		"entries":  entries,
+		"accounts": account_names,
+	}
+	tmpl.Execute(w, data)
+}
+
+func createTransaction(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		msg := fmt.Sprintf("Couldn't parse form: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	debit_id_s := r.FormValue("debit_account_id")
+	debit_id, err := strconv.ParseInt(debit_id_s, 10, 64)
+	if err != nil {
+		msg := fmt.Sprintf("Can't parse debit_account_id=%s, err=%s", debit_id_s, err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+	credit_id_s := r.FormValue("credit_account_id")
+	credit_id, err := strconv.ParseInt(credit_id_s, 10, 64)
+	if err != nil {
+		msg := fmt.Sprintf("Can't parse credit_account_id=%s, err=%s", credit_id_s, err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+	if debit_id == credit_id {
+		msg := fmt.Sprintf("debit_id (%d) and credit_id (%d) accounts MUST be different", debit_id, credit_id)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	note := r.FormValue("note")
+	amount_s := r.FormValue("amount")
+
+	amount, err := strconv.ParseFloat(amount_s, 64)
+	if err != nil {
+		msg := fmt.Sprintf("Couldn't parse float: amount (%s): %e", amount_s, err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	_, err = db.Exec(`
+		INSERT into transactions (amount, note, debit_account_id, credit_account_id)
+		VALUES ($1, $2, $3, $4)`,
+		amount, note, debit_id, credit_id,
+	)
+	if err != nil {
+		msg := fmt.Sprintf("Couldn't write to DB: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 422)
+		return
+	}
+
+	http.Redirect(w, r, "/ledger", 303)
 }
 
 type Account struct {
-	ID int64
+	ID   int64
 	Name string
 	Type int
 	// enum: Income, Expense, Asset, Liability
 }
-var accountTypeNames = map[int]string {
+
+var accountTypeNames = map[int]string{
 	0: "Income",
 	1: "Expense",
 	2: "Asset",
@@ -184,49 +246,6 @@ func listAccounts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	tmpl.Execute(w, accounts)
-}
-
-func createTransaction(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		msg := fmt.Sprintf("Couldn't parse form: %s", err)
-		log.Println(msg)
-		http.Error(w, msg, 422)
-		return
-	}
-
-	debitAccount := r.FormValue("debit_account")
-	creditAccount := r.FormValue("credit_account")
-	note := r.FormValue("note")
-	amount_s := r.FormValue("amount")
-
-	if debitAccount == creditAccount {
-		msg := fmt.Sprintf("debit (%s) and credit (%s) accounts MUST be different", debitAccount, creditAccount)
-		log.Println(msg)
-		http.Error(w, msg, 422)
-		return
-	}
-
-	amount, err := strconv.ParseFloat(amount_s, 64)
-	if err != nil {
-		msg := fmt.Sprintf("Couldn't parse float: amount (%s): %e", amount_s, err)
-		log.Println(msg)
-		http.Error(w, msg, 422)
-		return
-	}
-
-	_, err = db.Exec(`
-		INSERT into transactions (amount, note, debit_account, credit_account)
-		VALUES ($1, $2, $3, $4)`,
-		amount, note, debitAccount, creditAccount,
-	)
-	if err != nil {
-		msg := fmt.Sprintf("Couldn't write to DB: %s", err)
-		log.Println(msg)
-		http.Error(w, msg, 422)
-		return
-	}
-
-	http.Redirect(w, r, "/ledger", 303)
 }
 
 func createAccount(w http.ResponseWriter, r *http.Request) {

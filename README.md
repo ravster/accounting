@@ -8,4 +8,7 @@ docker exec -it accounting1 sh
 psql -U postgres
 go version
 go run .
+
+# Backup
+pg_dump -Fc -U postgres -d accounting > cafe_accounting.dump
 ```
