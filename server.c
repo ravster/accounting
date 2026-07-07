@@ -40,9 +40,39 @@ typedef struct {
 	char v[51];
 } Param;
 
+// Return value is "ok".
 int
 fillGetParams(Param* getParams, char* endpoint) {
+	char* qmark = strchr(endpoint, '?');
+	if (qmark == NULL) {
+		printf("FF");
+		return 1;
+	}
+	char* after_qmark = qmark+1;
+	printf("Query string:%s\n", after_qmark);
 	
+	int paramPairCount = 20;
+	char* paramPairSavePtr;
+	char* splitEqualSavePtr;
+	int count = 0;
+	char* paramPair = strtok_r(after_qmark, "&", &paramPairSavePtr);
+
+	while (paramPair != NULL) {
+		char* k_or_v = strtok_r(paramPair, "=", &splitEqualSavePtr);
+		Param* param = &getParams[count];
+		strncpy(param->k, k_or_v, 20);
+		k_or_v = strtok_r(NULL, "=", &splitEqualSavePtr);
+		strncpy(param->v, k_or_v, 50);
+
+		++count;
+		if (count == paramPairCount) {
+			// We allocated only this much.
+			break;
+		}
+		paramPair = strtok_r(NULL, "&", &paramPairSavePtr);
+	}
+	printf("GET param count:%d\n", count);
+	return 1;
 }
 
 // This function is run in a thread, to handle the request.
@@ -117,13 +147,24 @@ handle_request(void* client_socket_ptr) {
 
 	printf("Endpoint:%s\n", endpoint);
 
+	// List all get params
+	int ok = fillGetParams(getParams, endpoint);
+	if (!ok) {
+		char* msg = "Couldn't parse GET params.";
+		asprintf( &response, "HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		write(client_socket, response, strlen(response));
+		return NULL;
+	}
+	for (int i = 0; i<20; ++i) {
+		Param param = getParams[i];
+		if (param.k[0] == 0) { break; }
+		printf("Param %d: k:%s v:%s\n", i, param.k, param.v);
+	}
+	// List all post params
+
 	response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
 	write(client_socket, response, strlen(response));
 	return NULL;
-
-	// List all get params
-	int ok = fillGetParams(&getParams, endpoint);
-	// List all post params
 
 	// String split
 	char** strings = calloc(20, sizeof(char*));
