@@ -35,6 +35,16 @@ string_split(char* in, char** out, char* delim, int max_count) {
 	return count;
 }
 
+typedef struct {
+	char k[31];
+	char v[51];
+} Param;
+
+int
+fillGetParams(Param* getParams, char* endpoint) {
+	
+}
+
 // This function is run in a thread, to handle the request.
 void*
 handle_request(void* client_socket_ptr) {
@@ -46,6 +56,11 @@ handle_request(void* client_socket_ptr) {
 	char* response = NULL;
 	// TODO The above needs to be freed right now. But we wouldn't have to bother with that once we
 	// switch to thread-local vars since then the memory will be reused for each request. So much simpler.
+	Param* getParams = calloc(20, sizeof(Param));
+	for (int i = 0; i<20; ++i) {
+		getParams[i].k[0]=0;
+		getParams[i].v[0]=0;
+	}
 
 	if (bytes_read == 2047) {
 		char* msg = "Request too large. Max is 2KB.";
@@ -80,16 +95,16 @@ handle_request(void* client_socket_ptr) {
 	}
 	// TODO This should be an array that is global, and then write to the entry that is for
 	// this particular thread-index. This thread should know it's own index.
-	char* first_line = malloc(513);
-	first_line[0] = 0;
+	char* first_line = calloc(513, 1);
+	// Using calloc because I chooose to believe the things I read on the internet.
+	// https://vorpus.org/blog/why-does-calloc-exist/
 	strncpy(first_line, buf, line_len);
-	first_line[line_len] = 0;
 	printf("First line:%s\n", first_line);
 
 	// Parse line-1
-	char* http_method = malloc(8); http_method[0]=0;
-	char* endpoint = malloc(256); endpoint[0]=0;
-	char* http_version = malloc(16); http_version[0]=0;
+	char* http_method = calloc(8,1);
+	char* endpoint = calloc(256, 1);
+	char* http_version = calloc(16,1);
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
 		char* msg = "Failed to parse HTTP line 1. Fix your request.";
@@ -98,17 +113,16 @@ handle_request(void* client_socket_ptr) {
 		return NULL;
 	}
 
-	// GET or POST request?
 	printf("HTTP METHOD:%s\n", http_method);
 
-	// What is the endpoint integer?
 	printf("Endpoint:%s\n", endpoint);
 
-	 char* response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
-    write(client_socket, response, strlen(response));
-    return NULL;
+	response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
+	write(client_socket, response, strlen(response));
+	return NULL;
 
 	// List all get params
+	int ok = fillGetParams(&getParams, endpoint);
 	// List all post params
 
 	// String split
@@ -129,7 +143,7 @@ handle_request(void* client_socket_ptr) {
 	char* second = strings[1];
 	int code = atoi(second);
 
-	char* resp = malloc(32);
+	char* resp = calloc(32,1);
 	switch (code) {
 		case 1:
 			resp = "foo";
@@ -143,7 +157,7 @@ handle_request(void* client_socket_ptr) {
 	printf("1: %s\n2: %s\nResult: %s\n", first, second, resp);
 
 	// Response
-	char* out = malloc(256);
+	char* out = calloc(256,1);
 	out = resp;
 	write(client_socket, out, strlen(out));
 
