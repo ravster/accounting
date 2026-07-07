@@ -40,13 +40,16 @@ void*
 handle_request(void* client_socket_ptr) {
 	int client_socket = *((int*) client_socket_ptr);
 	free(client_socket_ptr);
-	// TODO. Change this to 2KB. Any request above that should be err'd back to client.
-	char buf[1024];
-	int bytes_read = read(client_socket, buf, 1023);
+	char buf[2048];
+	int bytes_read = read(client_socket, buf, 2047);
 	buf[bytes_read] = 0;
 
-	if (bytes_read == 1023) {
-		// TODO response to client to gtfo
+	if (bytes_read == 2047) {
+		char* msg = "Request too large. Max is 2KB.";
+		char* response = NULL;
+		asprintf( &response, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		write(client_socket, response, strlen(response));
+		return NULL;
 	}
 
 	if (bytes_read <= 0) {
@@ -71,7 +74,7 @@ handle_request(void* client_socket_ptr) {
 	first_line[0] = 0;
 	strncpy(first_line, buf, line_len);
 	first_line[line_len] = 0;
-	printf("First line:\n%s\n", first_line);
+	printf("First line:%s\n", first_line);
 
 	// Parse line-1
 	char* http_method = malloc(8); http_method[0]=0;
@@ -83,10 +86,10 @@ handle_request(void* client_socket_ptr) {
 	}
 
 	// GET or POST request?
-	printf("HTTP METHOD: %s\n", http_method);
+	printf("HTTP METHOD:%s\n", http_method);
 
 	// What is the endpoint integer?
-	printf("Endpoint: %s\n", endpoint);
+	printf("Endpoint:%s\n", endpoint);
 
 	 char* response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
     write(client_socket, response, strlen(response));
