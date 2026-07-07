@@ -43,17 +43,21 @@ handle_request(void* client_socket_ptr) {
 	char buf[2048];
 	int bytes_read = read(client_socket, buf, 2047);
 	buf[bytes_read] = 0;
+	char* response = NULL;
+	// TODO The above needs to be freed right now. But we wouldn't have to bother with that once we
+	// switch to thread-local vars since then the memory will be reused for each request. So much simpler.
 
 	if (bytes_read == 2047) {
 		char* msg = "Request too large. Max is 2KB.";
-		char* response = NULL;
 		asprintf( &response, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
 
 	if (bytes_read <= 0) {
-		close(client_socket);
+		char* msg = "Request too small. You sent nothing.";
+		asprintf( &response, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		write(client_socket, response, strlen(response));
 		return NULL;
 	}
 
@@ -62,11 +66,17 @@ handle_request(void* client_socket_ptr) {
 	// Get first line. Max 512B.
 	char* line_end = strstr(buf, "\r\n");
 	if (line_end == NULL) {
-		// TODO err to client. bad request headers
+		char* msg = "Couldn't identify the first header. Fix your request.";
+		asprintf( &response, "HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		write(client_socket, response, strlen(response));
+		return NULL;
 	}
 	size_t line_len = line_end - buf;
 	if (line_len > 512) {
-		// TODO err. url too big. bad request
+		char* msg = "Request endpoint too large. We aren't parsing over 512B.";
+		asprintf( &response, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		write(client_socket, response, strlen(response));
+		return NULL;
 	}
 	// TODO This should be an array that is global, and then write to the entry that is for
 	// this particular thread-index. This thread should know it's own index.
@@ -82,7 +92,10 @@ handle_request(void* client_socket_ptr) {
 	char* http_version = malloc(16); http_version[0]=0;
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
-		// TODO err bad request
+		char* msg = "Failed to parse HTTP line 1. Fix your request.";
+		asprintf( &response, "HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		write(client_socket, response, strlen(response));
+		return NULL;
 	}
 
 	// GET or POST request?
