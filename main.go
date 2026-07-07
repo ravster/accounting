@@ -282,6 +282,57 @@ func createAccount(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/accounts", 303)
 }
 
+func incomeStatement(w http.ResponseWriter, r *http.Request) {
+	// TODO
+	// parse query
+	// if query has "-", do month and year
+	// else just do year
+	// calc start
+	// calc stop
+	// find all accounts of type=income for the period, and their transactions, and do debit-credit.
+	// find total of all expense accounts for the period.
+	// Display data to user
+	rows, err := db.Query(`
+	  select id, name, type from accounts
+	`)
+	if err != nil {
+		msg := fmt.Sprintf("DB err: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 500)
+		return
+	}
+	defer rows.Close()
+
+	var accounts []Account
+	for rows.Next() {
+		var acct Account
+		err := rows.Scan(&acct.ID, &acct.Name, &acct.Type)
+		if err != nil {
+			msg := fmt.Sprintf("Row scan err: %s", err)
+			log.Println(msg)
+			http.Error(w, msg, 500)
+			return
+		}
+		accounts = append(accounts, acct)
+	}
+
+	funcMap := template.FuncMap{
+		"resolveType": formatAccountType,
+	}
+
+	tmplPath := filepath.Join("templates", "listAccounts.html")
+	tmpl, err := template.New(filepath.Base(tmplPath)).Funcs(funcMap).ParseFiles(tmplPath)
+	if err != nil {
+		msg := fmt.Sprintf("Template parsing err: %s", err)
+		log.Println(msg)
+		http.Error(w, msg, 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	tmpl.Execute(w, accounts)
+}
+
 func main() {
 	fmt.Println("Hello world!")
 	var err error
@@ -311,10 +362,7 @@ func main() {
 	http.HandleFunc("POST /transactions", createTransaction)
 	http.HandleFunc("GET /accounts", listAccounts)
 	http.HandleFunc("POST /accounts", createAccount)
-	// TODO
-	// Tag account as income (customers)
-	// Tag as expense (rent, Sin, NR, CamCK, EDC, water, wifi, depreciation, etc)
-	// Tag as asset (aba , cash, working-capital)
+	http.HandleFunc("GET /income_statement", incomeStatement)
 
 	log.Println("Server starting on http://localhost:3002")
 	if err := http.ListenAndServe(":3002", nil); err != nil {
