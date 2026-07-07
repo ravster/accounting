@@ -5,35 +5,11 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 
-// gcc server.c -o run -lpthread
+// clang server.c -o run -Wall -Wextra -lpthread && ./run
 // Test with
 // echo "fff\t1" | nc localhost 3003
 
 #define PORT 3003
-
-/*
- * Returns the number of splits.
- * Writes into the out param, which is already malloc'd.
- */
-int
-string_split(char* in, char** out, char* delim, int max_count) {
-	char* saveptr;
-	int count = 0;
-	char* substring = strtok_r(in, delim, &saveptr);
-
-	while (substring != NULL) {
-		printf("in loop. substring=%s\n", substring);
-		out[count] = substring;
-		++count;
-		if (count == max_count) {
-			// We allocated only this much.
-			break;
-		}
-		substring = strtok_r(NULL, delim, &saveptr);
-	}
-	printf("count %d\n", count);
-	return count;
-}
 
 typedef struct {
 	char k[31];
@@ -144,7 +120,6 @@ handle_request(void* client_socket_ptr) {
 	}
 
 	printf("HTTP METHOD:%s\n", http_method);
-
 	printf("Endpoint:%s\n", endpoint);
 
 	// List all get params
@@ -161,47 +136,14 @@ handle_request(void* client_socket_ptr) {
 		printf("Param %d: k:%s v:%s\n", i, param.k, param.v);
 	}
 	// List all post params
+	// Identify the endpoint
+	// Switch on endpoint
+	// Collect response string from handler
+	// Return response to client
 
 	response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
 	write(client_socket, response, strlen(response));
 	return NULL;
-
-	// String split
-	char** strings = calloc(20, sizeof(char*));
-	int string_count = 0;
-	string_count = string_split(buf, strings, "\t", 20);
-
-	if (string_count < 2) {
-		char* errmsg;
-		asprintf(&errmsg, "Invalid string count:%d from string:%s\n", string_count, buf);
-		fprintf(stderr, "%s", errmsg);
-		dprintf(client_socket, "%s", errmsg);
-		free(errmsg);
-		close(client_socket);
-		return NULL;
-	}
-	char* first = strings[0];
-	char* second = strings[1];
-	int code = atoi(second);
-
-	char* resp = calloc(32,1);
-	switch (code) {
-		case 1:
-			resp = "foo";
-			break;
-		case 2:
-			resp = "bar";
-			break;
-		default:
-			resp = "baz";
-	}
-	printf("1: %s\n2: %s\nResult: %s\n", first, second, resp);
-
-	// Response
-	char* out = calloc(256,1);
-	out = resp;
-	write(client_socket, out, strlen(out));
-
 }
 
 int
