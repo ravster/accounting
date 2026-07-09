@@ -10,6 +10,67 @@
 // echo "fff\t1" | nc localhost 3003
 
 #define PORT 3003
+#define THREAD_POOL_SIZE 4
+#define QUEUE_MAX_SIZE 16
+
+// This queue is implemented as a ring-buffer.
+// Producer: Main thread. Accepts new incoming requests and writes the socket to the tail.
+// Consumers: Worker threads in the thread-pool. Consume client-sockets from the head and process them.
+typedef struct {
+	pthread_mutex_t mutex;
+	pthread_cond_t cond_var;
+	int count;
+	int head;
+	int tail;
+	int client_sockets[QUEUE_MAX_SIZE];
+} queue_ringbuffer_t;
+
+queue_ringbuffer_t client_socket_queue = {
+	PTHREAD_MUTEX_INITIALIZER,
+	PTHREAD_COND_INITIALIZER,
+	0, 0, 0, {0}
+};
+
+void
+queue_push(queue_ringbuffer_t* queue, int socket) {
+	// Mutex and Cond work as a pair.
+	// Get lock on queue
+	pthread_mutex_lock(&queue->mutex);
+	// noop if queue is full
+	if (queue->count >= QUEUE_MAX_SIZE) {
+		printf("Queue full! Dropping connection!\n");
+		close(socket);
+		pthread_mutex_unlock(&queue->mutex);
+		return;
+	}
+	// Write into queue-tail, incr tail, incr count.
+	queue->count++;
+	queue->client_sockets[queue->tail] = socket;
+	// Because we want it to overflow back to 0, because ringbuffer.
+	queue->tail = (queue->tail+1) % QUEUE_MAX_SIZE;
+	// Wake up one thread
+	pthread_cond_signal(&queue->cond_var);
+	// Remove lock on queue
+	pthread_mutex_unlock(&queue->mutex);
+}
+
+int
+queue_pop(queue_ringbuffer_t* queue) {
+	pthread_mutex_lock(&queue->mutex);
+	// Handle spurious wakeups because OSs do that.
+	while (queue->count < 1) {
+		pthread_cond_wait(
+				&queue->cond_var,
+				&queue->mutex
+				);
+	}
+	int out = queue->client_sockets[queue->head];
+	queue->head = (queue->head + 1) % QUEUE_MAX_SIZE; // % because ringbuffer.
+	queue->count--;
+	pthread_mutex_unlock(&queue->mutex);
+	return out;
+}
+// END INT QUEUE implementation
 
 typedef struct {
 	char k[31];
@@ -51,11 +112,9 @@ fillGetParams(Param* getParams, char* endpoint) {
 	return 1;
 }
 
-// This function is run in a thread, to handle the request.
+// This function is called from a threadpool worker, to handle the request.
 void*
-handle_request(void* client_socket_ptr) {
-	int client_socket = *((int*) client_socket_ptr);
-	free(client_socket_ptr);
+handle_request(int client_socket) {
 	char buf[2048];
 	int bytes_read = read(client_socket, buf, 2047);
 	buf[bytes_read] = 0;
@@ -136,13 +195,24 @@ handle_request(void* client_socket_ptr) {
 		printf("Param %d: k:%s v:%s\n", i, param.k, param.v);
 	}
 	// List all post params
-	// Identify the endpoint
-	// Switch on endpoint
-	// Collect response string from handler
+	// Identify the route
+	// Switch on route
+	// Collect response string from route-handler
 	// Return response to client
 
 	response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
 	write(client_socket, response, strlen(response));
+	return NULL;
+}
+
+void*
+threadpool_worker(void* arg) {
+	(void)arg; // Unused. Will eventually be used to give each thread an ID.
+	while (1) {
+		// Blocking call
+		int client_socket = queue_pop(&client_socket_queue);
+		handle_request(client_socket);
+	}
 	return NULL;
 }
 
@@ -166,6 +236,21 @@ listen_on_port() {
 
 int
 main() {
+	// Set up thread pool
+	pthread_t thread_pool[THREAD_POOL_SIZE];
+	for (int i = 0; i<THREAD_POOL_SIZE; i++) {
+		int err = pthread_create(&thread_pool[i],
+				NULL,
+				threadpool_worker,
+				NULL);
+		if (err != 0) {
+			perror("Couldn't create thread in pool!\n");
+			return 1;
+		}
+		pthread_detach(thread_pool[i]);
+	}
+	printf("Threadpool started with %d workers.\n", THREAD_POOL_SIZE);
+
 	int server_fd = listen_on_port();
 	while (1) {
 		// Build up client socket.
@@ -174,31 +259,17 @@ main() {
 		int* new_socket = malloc(sizeof(int));
 		// This blocks till a connection comes through. Easy.
 		// In happy path, new_socket is freed by the worker thread.
-		*new_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
-		if (*new_socket < 0) {
+		int client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
+		if (client_socket < 0) {
 			perror("accept failed");
 			free(new_socket);
 			continue;
 		}
 
-		// TODO: Instead of making a new OS thread, make a thread-pool.
-		// Create a queue.
-		// Then make 4-8 threads and have them read from the queue.
-		// When a new client-socket is made, push that into the queue.
-		// Figure out the pthreads way to wake all or some of the threads in the pool.
-		// Make new thread to handle request.
-		pthread_t thread_id;
-		int err = 0;
-		err = pthread_create(&thread_id, NULL, handle_request, (void*)new_socket);
-		if (err != 0) {
-			perror("Couldn't create thread");
-			close(*new_socket);
-			free(new_socket);
-		} else {
-			// Thread successfully made. We don't want it to be a zombie after it's done
-			// work, so set it to clean up after it finishes execution.
-			pthread_detach(thread_id);
-		}
+
+		// Push client_socket file-descriptor directly onto queue that is consumed by the thread-pool.
+		queue_push(&client_socket_queue, client_socket);
 	}
+	return 0;
 }
 
