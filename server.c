@@ -17,6 +17,8 @@
 #define THREAD_POOL_SIZE 4
 #define QUEUE_MAX_SIZE 16
 
+typedef uint16_t u16;
+
 // This queue is implemented as a ring-buffer.
 // Producer: Main thread. Accepts new incoming requests and writes the socket to the tail.
 // Consumers: Worker threads in the thread-pool. Consume client-sockets from the head and process them.
@@ -86,11 +88,9 @@ int
 fillGetParams(Param* getParams, char* endpoint) {
 	char* qmark = strchr(endpoint, '?');
 	if (qmark == NULL) {
-		printf("FF");
 		return 1;
 	}
 	char* after_qmark = qmark+1;
-	printf("Query string:%s\n", after_qmark);
 	
 	int paramPairCount = 20;
 	char* paramPairSavePtr;
@@ -112,7 +112,6 @@ fillGetParams(Param* getParams, char* endpoint) {
 		}
 		paramPair = strtok_r(NULL, "&", &paramPairSavePtr);
 	}
-	printf("GET param count:%d\n", count);
 	return 1;
 }
 
@@ -169,6 +168,18 @@ httpreq_response_appendf(httpreq* req, char* fmt, ...) {
 
 httpreq requests[4];
 // END httpreq object.
+
+// Have to loop because "write" isn't guaranteed to do it all in one syscall. It tells us how much it did.
+int // ok
+write_all(int socket, char* buffer, u16 len) {
+	char* ptr = buffer;
+	u16 written = 0;
+	while (written < len) {
+		ssize_t just_wrote = write(socket, ptr, len-written);
+		written += just_wrote;
+	}
+	return 1;
+}
 
 // This function is called from a threadpool worker, to handle the request.
 void*
@@ -237,7 +248,6 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 	// Using calloc because I chooose to believe the things I read on the internet.
 	// https://vorpus.org/blog/why-does-calloc-exist/
 	strncpy(first_line, buf, line_len);
-	printf("First line:%s\n", first_line);
 
 	// Parse line-1
 	char* http_method = calloc(8,1);
@@ -256,9 +266,6 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		return NULL;
 	}
 
-	printf("HTTP METHOD:%s\n", http_method);
-	printf("Endpoint:%s\n", endpoint);
-
 	// List all get params
 	int ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
@@ -272,11 +279,6 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
-	for (int i = 0; i<20; ++i) {
-		Param param = getParams[i];
-		if (param.k[0] == 0) { break; }
-		printf("Param %d: k:%s v:%s\n", i, param.k, param.v);
-	}
 	// List all post params
 	// Identify the route
 	// Switch on route
@@ -285,9 +287,14 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 
 	httpreq_response_appendf(
 		request,
-		"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"
+		"111Hello bob1234567891"
 	);
-	write(client_socket, response, strlen(response));
+	// Should probably also have a scratch area for the body, and then write the headers, and append the body.
+	char* resp_headers = calloc(200, 1);
+	printf("declared len:%d\nactual len:%d\n", request->response_body_len, strlen(request->response_body));
+	sprintf(resp_headers, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", request->response_body_len);
+	write_all(client_socket, resp_headers, strlen(resp_headers));
+	write_all(client_socket, response, request->response_body_len);
 	return NULL;
 }
 
