@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdint.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -114,40 +116,90 @@ fillGetParams(Param* getParams, char* endpoint) {
 	return 1;
 }
 
+// Basically a golang-style http.Request struct that will be cleared and reused by each thread.
+#define HTTPREQ_RESPONSE_MAX_SIZE 2048
+typedef struct {
+	char request_buf[HTTPREQ_RESPONSE_MAX_SIZE], response_body[HTTPREQ_RESPONSE_MAX_SIZE],
+	     http_method[8], endpoint[8], errmsg[256];
+	uint16_t response_body_len;
+	Param getParams[20];
+	Param postParams[20];
+	Param request_headers[20];
+} httpreq;
+
+void
+httpreq_clear(httpreq* req) {
+	memset(req, 0, sizeof(httpreq));
+}
+
+void
+httpreq_init(httpreq* req, char* new_request_buf) {}
+
+// Returns "ok"
+int
+httpreq_response_appendf(httpreq* req, char* fmt, ...) {
+	size_t max_size = HTTPREQ_RESPONSE_MAX_SIZE;
+	size_t curr_len = req->response_body_len;
+	if (curr_len > max_size-1) {
+		sprintf(req->errmsg, "Response-body filled up");
+		return 0;
+	}
+	size_t available_space = max_size - curr_len - 1;
+	va_list args;
+	va_start(args, fmt);
+	int written = vsnprintf(
+		req->response_body + curr_len,
+		available_space,
+		fmt,
+		args
+	);
+	va_end(args);
+	if (written <= 0) {
+		sprintf(req->errmsg, "Didn't write anything. in:%s\n", fmt);
+		return 0;
+	}
+	size_t actual_written = (size_t)written;
+	if (actual_written > available_space) {
+		req->response_body_len = max_size;
+	} else {
+		req->response_body_len += actual_written;
+	}
+	return 1;
+}
+
+httpreq requests[4];
+// END httpreq object.
+
 // This function is called from a threadpool worker, to handle the request.
 void*
-handle_request(PGconn* db, int thread_idx, int client_socket) {
-	// Memory usage:
-	// Each worker needs:
-	// 2kB request body
-	// 20 getParams
-	// 2kB response body
-	// http-method
-	// endpoint
-	// request-headers
-	// Basically a golang-style http.Request struct that will be cleared and reused by this thread.
-	char buf[2048];
+handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) {
+	httpreq_clear(request);
+	char* buf =  request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
 	buf[bytes_read] = 0;
-	char* response = NULL;
-	// TODO The above needs to be freed right now. But we wouldn't have to bother with that once we
-	// switch to thread-local vars since then the memory will be reused for each request. So much simpler.
-	Param* getParams = calloc(20, sizeof(Param));
-	for (int i = 0; i<20; ++i) {
-		getParams[i].k[0]=0;
-		getParams[i].v[0]=0;
-	}
+	char* response = request->response_body;
+	Param* getParams = request->getParams;
 
 	if (bytes_read == 2047) {
 		char* msg = "Request too large. Max is 2KB.";
-		asprintf( &response, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		httpreq_response_appendf(
+			request,
+			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
+			strlen(msg),
+			msg
+		);
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
 
 	if (bytes_read <= 0) {
 		char* msg = "Request too small. You sent nothing.";
-		asprintf( &response, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		httpreq_response_appendf(
+			request,
+			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
+			strlen(msg),
+			msg
+		);
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
@@ -158,14 +210,24 @@ handle_request(PGconn* db, int thread_idx, int client_socket) {
 	char* line_end = strstr(buf, "\r\n");
 	if (line_end == NULL) {
 		char* msg = "Couldn't identify the first header. Fix your request.";
-		asprintf( &response, "HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		httpreq_response_appendf(
+			request,
+			"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: %lu\r\n\r\n%s",
+			strlen(msg),
+			msg
+		);
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
 	size_t line_len = line_end - buf;
 	if (line_len > 512) {
 		char* msg = "Request endpoint too large. We aren't parsing over 512B.";
-		asprintf( &response, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		httpreq_response_appendf(
+			request,
+			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
+			strlen(msg),
+			msg
+		);
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
@@ -184,7 +246,12 @@ handle_request(PGconn* db, int thread_idx, int client_socket) {
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
 		char* msg = "Failed to parse HTTP line 1. Fix your request.";
-		asprintf( &response, "HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		httpreq_response_appendf(
+			request,
+			"HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s",
+			strlen(msg),
+			msg
+		);
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
@@ -196,7 +263,12 @@ handle_request(PGconn* db, int thread_idx, int client_socket) {
 	int ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
 		char* msg = "Couldn't parse GET params.";
-		asprintf( &response, "HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s", strlen(msg), msg);
+		httpreq_response_appendf(
+			request,
+			 "HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s",
+			strlen(msg),
+			msg
+		);
 		write(client_socket, response, strlen(response));
 		return NULL;
 	}
@@ -211,7 +283,10 @@ handle_request(PGconn* db, int thread_idx, int client_socket) {
 	// Collect response string from route-handler
 	// Return response to client
 
-	response = "HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!";
+	httpreq_response_appendf(
+		request,
+		"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nHello, World!"
+	);
 	write(client_socket, response, strlen(response));
 	return NULL;
 }
@@ -229,10 +304,14 @@ threadpool_worker(void* arg) {
 		return NULL;
 	}
 	printf("DB conn made by thread:%d.\n", thread_idx);
+
+	httpreq* request;
+	request = &requests[thread_idx];
+
 	while (1) {
 		// Blocking call
 		int client_socket = queue_pop(&client_socket_queue);
-		handle_request(db, thread_idx, client_socket);
+		handle_request(db, thread_idx, client_socket, request);
 	}
 	PQfinish(db);
 	return NULL;
@@ -242,7 +321,6 @@ int
 listen_on_port() {
 	int server_fd;
 	struct sockaddr_in address;
-	int opt = 1;
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
 	address.sin_family = AF_INET;
