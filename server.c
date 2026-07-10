@@ -124,6 +124,7 @@ typedef struct {
 	     response_scratch1[HTTPREQ_RESPONSE_MAX_SIZE],
 	     http_method[8], endpoint[256], http_version[16],
 	     errmsg[256];
+	u16 route;
 	u16 response_body_len;
 	u16 response_scratch1_len;
 	Param getParams[20];
@@ -198,6 +199,21 @@ write_all(int socket, char* buffer, u16 len) {
 	return 1;
 }
 
+int // ok
+parse_route(u16* route, char* endpoint) {
+	if (endpoint[0] != '/') {
+		return 0;
+	}
+	char* start = endpoint +1;
+	char* endptr;
+	u16 out = strtoul(start, &endptr, 10);
+	if (start == endptr) {
+		return 0;
+	}
+	*route = out;
+	return 1;
+}
+
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
 parse_request(httpreq* request, int client_socket, int thread_idx) {
@@ -268,7 +284,13 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 		return 0;
 	}
 
-	int ok = fillGetParams(getParams, endpoint);
+	int ok = parse_route(&request->route, endpoint);
+	if (!ok) {
+		// TODO generic errmsg response function. Collapse from all the other examples in this func.
+	}
+	printf("route:%d\n", request->route);
+
+	ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
 		char* msg = "Couldn't parse GET params.";
 		httpreq_response_appendf(
