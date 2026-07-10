@@ -4,12 +4,14 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <arpa/inet.h>
+#include <libpq-fe.h>
 
 // clang server.c -o run -Wall -Wextra -lpthread && ./run
+// gcc -o run -Wall -Wextra -lpthread -lpq server.c && ./run
 // Test with
 // echo "fff\t1" | nc localhost 3003
 
-#define PORT 3003
+#define PORT 3002
 #define THREAD_POOL_SIZE 4
 #define QUEUE_MAX_SIZE 16
 
@@ -207,12 +209,23 @@ handle_request(int client_socket) {
 
 void*
 threadpool_worker(void* arg) {
-	(void)arg; // Unused. Will eventually be used to give each thread an ID.
+	int thread_idx = *((int*)arg);
+	free(arg);
+	// Each thread gets it's own connection because these conns are not thread-safe.
+	PGconn* db = PQconnectdb(""); // Read from ENV
+	if (PQstatus(db) != CONNECTION_OK) {
+		printf("DB connection failed:%s\n", PQerrorMessage(db));
+		PQfinish(db);
+		printf("Killing thread\n");
+		return NULL;
+	}
+	printf("DB conn made by thread:%d.\n", thread_idx);
 	while (1) {
 		// Blocking call
 		int client_socket = queue_pop(&client_socket_queue);
 		handle_request(client_socket);
 	}
+	PQfinish(db);
 	return NULL;
 }
 
@@ -236,13 +249,20 @@ listen_on_port() {
 
 int
 main() {
+
 	// Set up thread pool
+	// param pool_size uint
+	// param threadpool_worker func
+	// Right now the worker knows which queue-datastructure to use, an cond_var, and mutex. We should
+	// pass that in in the future.
 	pthread_t thread_pool[THREAD_POOL_SIZE];
 	for (int i = 0; i<THREAD_POOL_SIZE; i++) {
+		int* thread_idx = malloc(sizeof(int));
+		*thread_idx = i;
 		int err = pthread_create(&thread_pool[i],
 				NULL,
 				threadpool_worker,
-				NULL);
+				thread_idx);
 		if (err != 0) {
 			perror("Couldn't create thread in pool!\n");
 			return 1;
@@ -250,6 +270,7 @@ main() {
 		pthread_detach(thread_pool[i]);
 	}
 	printf("Threadpool started with %d workers.\n", THREAD_POOL_SIZE);
+	// END threadpool setup. Should extract to func.
 
 	int server_fd = listen_on_port();
 	while (1) {
