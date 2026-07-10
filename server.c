@@ -119,8 +119,10 @@ fillGetParams(Param* getParams, char* endpoint) {
 #define HTTPREQ_RESPONSE_MAX_SIZE 2048
 typedef struct {
 	char request_buf[HTTPREQ_RESPONSE_MAX_SIZE], response_body[HTTPREQ_RESPONSE_MAX_SIZE],
+	     response_scratch1[HTTPREQ_RESPONSE_MAX_SIZE],
 	     http_method[8], endpoint[8], errmsg[256];
-	uint16_t response_body_len;
+	u16 response_body_len;
+	u16 response_scratch1_len;
 	Param getParams[20];
 	Param postParams[20];
 	Param request_headers[20];
@@ -131,14 +133,26 @@ httpreq_clear(httpreq* req) {
 	memset(req, 0, sizeof(httpreq));
 }
 
-void
-httpreq_init(httpreq* req, char* new_request_buf) {}
-
 // Returns "ok"
 int
-httpreq_response_appendf(httpreq* req, char* fmt, ...) {
+httpreq_response_appendf(httpreq* req, int body_or_scratch1, char* fmt, ...) {
+	// buffer
+	// len
+	char* buffer;
+	u16* len;
+	switch (body_or_scratch1) {
+		case 0:
+			buffer = req->response_body;
+			len = &req->response_body_len;
+			break;
+		case 1:
+			buffer = req->response_scratch1;
+			len = &req->response_scratch1_len;
+			break;
+	}
+
 	size_t max_size = HTTPREQ_RESPONSE_MAX_SIZE;
-	size_t curr_len = req->response_body_len;
+	size_t curr_len = *len;
 	if (curr_len > max_size-1) {
 		sprintf(req->errmsg, "Response-body filled up");
 		return 0;
@@ -147,7 +161,7 @@ httpreq_response_appendf(httpreq* req, char* fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
 	int written = vsnprintf(
-		req->response_body + curr_len,
+		buffer + curr_len,
 		available_space,
 		fmt,
 		args
@@ -159,9 +173,9 @@ httpreq_response_appendf(httpreq* req, char* fmt, ...) {
 	}
 	size_t actual_written = (size_t)written;
 	if (actual_written > available_space) {
-		req->response_body_len = max_size;
+		*len = max_size;
 	} else {
-		req->response_body_len += actual_written;
+		*len += actual_written;
 	}
 	return 1;
 }
@@ -195,6 +209,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		char* msg = "Request too large. Max is 2KB.";
 		httpreq_response_appendf(
 			request,
+			0,
 			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
 			strlen(msg),
 			msg
@@ -207,6 +222,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		char* msg = "Request too small. You sent nothing.";
 		httpreq_response_appendf(
 			request,
+			0,
 			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
 			strlen(msg),
 			msg
@@ -223,6 +239,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		char* msg = "Couldn't identify the first header. Fix your request.";
 		httpreq_response_appendf(
 			request,
+			0,
 			"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: %lu\r\n\r\n%s",
 			strlen(msg),
 			msg
@@ -235,6 +252,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		char* msg = "Request endpoint too large. We aren't parsing over 512B.";
 		httpreq_response_appendf(
 			request,
+			0,
 			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
 			strlen(msg),
 			msg
@@ -258,6 +276,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		char* msg = "Failed to parse HTTP line 1. Fix your request.";
 		httpreq_response_appendf(
 			request,
+			0,
 			"HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s",
 			strlen(msg),
 			msg
@@ -272,6 +291,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		char* msg = "Couldn't parse GET params.";
 		httpreq_response_appendf(
 			request,
+			0,
 			 "HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s",
 			strlen(msg),
 			msg
@@ -287,13 +307,20 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 
 	httpreq_response_appendf(
 		request,
+		1,
 		"111Hello bob1234567891"
 	);
 	// Should probably also have a scratch area for the body, and then write the headers, and append the body.
 	char* resp_headers = calloc(200, 1);
-	printf("declared len:%d\nactual len:%d\n", request->response_body_len, strlen(request->response_body));
-	sprintf(resp_headers, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", request->response_body_len);
-	write_all(client_socket, resp_headers, strlen(resp_headers));
+	httpreq_response_appendf(
+		request,
+		0,
+		"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n",
+		request->response_scratch1_len);
+	memcpy(request->response_body + request->response_body_len,
+		request->response_scratch1,
+		request->response_scratch1_len);
+	request->response_body_len += request->response_scratch1_len;
 	write_all(client_socket, response, request->response_body_len);
 	return NULL;
 }
