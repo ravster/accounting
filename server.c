@@ -118,9 +118,12 @@ fillGetParams(Param* getParams, char* endpoint) {
 // Basically a golang-style http.Request struct that will be cleared and reused by each thread.
 #define HTTPREQ_RESPONSE_MAX_SIZE 2048
 typedef struct {
-	char request_buf[HTTPREQ_RESPONSE_MAX_SIZE], response_body[HTTPREQ_RESPONSE_MAX_SIZE],
+	char request_buf[HTTPREQ_RESPONSE_MAX_SIZE],
+	     request_scratch1[HTTPREQ_RESPONSE_MAX_SIZE],
+	     response_body[HTTPREQ_RESPONSE_MAX_SIZE],
 	     response_scratch1[HTTPREQ_RESPONSE_MAX_SIZE],
-	     http_method[8], endpoint[8], errmsg[256];
+	     http_method[8], endpoint[256], http_version[16],
+	     errmsg[256];
 	u16 response_body_len;
 	u16 response_scratch1_len;
 	Param getParams[20];
@@ -195,15 +198,15 @@ write_all(int socket, char* buffer, u16 len) {
 	return 1;
 }
 
-// This function is called from a threadpool worker, to handle the request.
-void*
-handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) {
-	httpreq_clear(request);
+// This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
+int // OK
+parse_request(httpreq* request, int client_socket, int thread_idx) {
 	char* buf =  request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
-	buf[bytes_read] = 0;
 	char* response = request->response_body;
 	Param* getParams = request->getParams;
+
+	printf("[thread:%d] Received\n%s\n", thread_idx, buf);
 
 	if (bytes_read == 2047) {
 		char* msg = "Request too large. Max is 2KB.";
@@ -214,24 +217,9 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 			strlen(msg),
 			msg
 		);
-		write(client_socket, response, strlen(response));
-		return NULL;
+		write_all(client_socket, response, request->response_body_len);
+		return 0;
 	}
-
-	if (bytes_read <= 0) {
-		char* msg = "Request too small. You sent nothing.";
-		httpreq_response_appendf(
-			request,
-			0,
-			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
-			strlen(msg),
-			msg
-		);
-		write(client_socket, response, strlen(response));
-		return NULL;
-	}
-
-	printf("[thread:%d] Received\n%s\n", thread_idx, buf);
 
 	// Get first line. Max 512B.
 	char* line_end = strstr(buf, "\r\n");
@@ -244,8 +232,8 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 			strlen(msg),
 			msg
 		);
-		write(client_socket, response, strlen(response));
-		return NULL;
+		write_all(client_socket, response, request->response_body_len);
+		return 0;
 	}
 	size_t line_len = line_end - buf;
 	if (line_len > 512) {
@@ -257,20 +245,15 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 			strlen(msg),
 			msg
 		);
-		write(client_socket, response, strlen(response));
-		return NULL;
+		write_all(client_socket, response, request->response_body_len);
+		return 0;
 	}
-	// TODO This should be an array that is global, and then write to the entry that is for
-	// this particular thread-index. This thread should know it's own index.
-	char* first_line = calloc(513, 1);
-	// Using calloc because I chooose to believe the things I read on the internet.
-	// https://vorpus.org/blog/why-does-calloc-exist/
-	strncpy(first_line, buf, line_len);
 
-	// Parse line-1
-	char* http_method = calloc(8,1);
-	char* endpoint = calloc(256, 1);
-	char* http_version = calloc(16,1);
+	char* first_line = request->request_scratch1;
+	strncpy(first_line, buf, line_len);
+	char* http_method = request->http_method;
+	char* endpoint = request->endpoint;
+	char* http_version = request->http_version;
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
 		char* msg = "Failed to parse HTTP line 1. Fix your request.";
@@ -281,11 +264,10 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 			strlen(msg),
 			msg
 		);
-		write(client_socket, response, strlen(response));
-		return NULL;
+		write_all(client_socket, response, request->response_body_len);
+		return 0;
 	}
 
-	// List all get params
 	int ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
 		char* msg = "Couldn't parse GET params.";
@@ -296,11 +278,28 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 			strlen(msg),
 			msg
 		);
-		write(client_socket, response, strlen(response));
+		write_all(client_socket, response, request->response_body_len);
+		return 0;
+	}
+
+	// TODO post params
+	// From endpoint, get route as int.
+
+	return 1;
+}
+
+// This function is called from a threadpool worker, to handle the request.
+void*
+handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) {
+	httpreq_clear(request);
+	int ok = parse_request(request, client_socket, thread_idx);
+	if (!ok) {
+		// parse_request will send response to client.
 		return NULL;
 	}
-	// List all post params
-	// Identify the route
+
+	char* response = request->response_body;
+
 	// Switch on route
 	// Collect response string from route-handler
 	// Return response to client
@@ -310,8 +309,6 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 		1,
 		"111Hello bob1234567891"
 	);
-	// Should probably also have a scratch area for the body, and then write the headers, and append the body.
-	char* resp_headers = calloc(200, 1);
 	httpreq_response_appendf(
 		request,
 		0,
