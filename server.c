@@ -116,7 +116,16 @@ fillGetParams(Param* getParams, char* endpoint) {
 
 // This function is called from a threadpool worker, to handle the request.
 void*
-handle_request(int client_socket) {
+handle_request(PGconn* db, int thread_idx, int client_socket) {
+	// Memory usage:
+	// Each worker needs:
+	// 2kB request body
+	// 20 getParams
+	// 2kB response body
+	// http-method
+	// endpoint
+	// request-headers
+	// Basically a golang-style http.Request struct that will be cleared and reused by this thread.
 	char buf[2048];
 	int bytes_read = read(client_socket, buf, 2047);
 	buf[bytes_read] = 0;
@@ -143,7 +152,7 @@ handle_request(int client_socket) {
 		return NULL;
 	}
 
-	printf("Received\n%s\n", buf);
+	printf("[thread:%d] Received\n%s\n", thread_idx, buf);
 
 	// Get first line. Max 512B.
 	char* line_end = strstr(buf, "\r\n");
@@ -223,7 +232,7 @@ threadpool_worker(void* arg) {
 	while (1) {
 		// Blocking call
 		int client_socket = queue_pop(&client_socket_queue);
-		handle_request(client_socket);
+		handle_request(db, thread_idx, client_socket);
 	}
 	PQfinish(db);
 	return NULL;
