@@ -94,17 +94,18 @@ fillGetParams(Param* getParams, char* endpoint) {
 	
 	int paramPairCount = 20;
 	char* paramPairSavePtr;
-	char* splitEqualSavePtr;
 	int count = 0;
 	char* paramPair = strtok_r(after_qmark, "&", &paramPairSavePtr);
 
+	// TODO for loop duh
 	while (paramPair != NULL) {
-		char* k_or_v = strtok_r(paramPair, "=", &splitEqualSavePtr);
 		Param* param = &getParams[count];
-		// TODO this can just be scanf, duh, since we know the format.
-		strncpy(param->k, k_or_v, 31);
-		k_or_v = strtok_r(NULL, "=", &splitEqualSavePtr);
-		strncpy(param->v, k_or_v, 31);
+		int sscanf_result = sscanf(paramPair, "%31[^=]=%31s", param->k, param->v);
+		if (sscanf_result != 2) {
+			printf("paramPair:%s\nk:%s\nv:%s\n", paramPair, param->k, param->v);
+			printf("GET param sscanf processing err.\n");
+			return 0;
+		}
 
 		++count;
 		if (count == paramPairCount) {
