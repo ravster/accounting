@@ -214,6 +214,20 @@ parse_route(u16* route, char* endpoint) {
 	return 1;
 }
 
+// Write a string out as the HTTP response.
+void
+write_error(int client_socket, httpreq* request, int http_status, char* errmsg) {
+	httpreq_response_appendf(
+		request,
+		0,
+		"HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
+		http_status,
+		strlen(errmsg),
+		errmsg
+	);
+	write_all(client_socket, request->response_body, request->response_body_len);
+}
+
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
 parse_request(httpreq* request, int client_socket, int thread_idx) {
@@ -225,43 +239,19 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 	printf("[thread:%d] Received\n%s\n", thread_idx, buf);
 
 	if (bytes_read == 2047) {
-		char* msg = "Request too large. Max is 2KB.";
-		httpreq_response_appendf(
-			request,
-			0,
-			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
-			strlen(msg),
-			msg
-		);
-		write_all(client_socket, response, request->response_body_len);
+		write_error( client_socket, request, 413, "Request too large. Max is 2KB.");
 		return 0;
 	}
 
 	// Get first line. Max 512B.
 	char* line_end = strstr(buf, "\r\n");
 	if (line_end == NULL) {
-		char* msg = "Couldn't identify the first header. Fix your request.";
-		httpreq_response_appendf(
-			request,
-			0,
-			"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: %lu\r\n\r\n%s",
-			strlen(msg),
-			msg
-		);
-		write_all(client_socket, response, request->response_body_len);
+		write_error( client_socket, request, 422, "Couldn't identify the first header. Fix your request.");
 		return 0;
 	}
 	size_t line_len = line_end - buf;
 	if (line_len > 512) {
-		char* msg = "Request endpoint too large. We aren't parsing over 512B.";
-		httpreq_response_appendf(
-			request,
-			0,
-			"HTTP/1.1 413 Payload Too Large\r\nContent-Length: %lu\r\n\r\n%s",
-			strlen(msg),
-			msg
-		);
-		write_all(client_socket, response, request->response_body_len);
+		write_error( client_socket, request, 413, "Request endpoint too large. We aren't parsing over 512B.");
 		return 0;
 	}
 
@@ -272,35 +262,20 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 	char* http_version = request->http_version;
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
-		char* msg = "Failed to parse HTTP line 1. Fix your request.";
-		httpreq_response_appendf(
-			request,
-			0,
-			"HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s",
-			strlen(msg),
-			msg
-		);
-		write_all(client_socket, response, request->response_body_len);
+		write_error( client_socket, request, 422, "Failed to parse HTTP line 1. Fix your request.");
 		return 0;
 	}
 
 	int ok = parse_route(&request->route, endpoint);
 	if (!ok) {
-		// TODO generic errmsg response function. Collapse from all the other examples in this func.
+		write_error( client_socket, request, 422, "Couldn't parse route from endpoint.");
+		return 0;
 	}
 	printf("route:%d\n", request->route);
 
 	ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
-		char* msg = "Couldn't parse GET params.";
-		httpreq_response_appendf(
-			request,
-			0,
-			 "HTTP/1.1 422 Unprocessable entry\r\nContent-Length: %lu\r\n\r\n%s",
-			strlen(msg),
-			msg
-		);
-		write_all(client_socket, response, request->response_body_len);
+		write_error( client_socket, request, 422, "Couldn't parse GET params.");
 		return 0;
 	}
 
