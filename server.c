@@ -28,6 +28,7 @@ typedef struct {
 
 sstr*
 sstr_new(size_t cap) {
+	printf("sstr_new\n");
 	sstr* s = malloc(sizeof(sstr));
 	s->len = 0;
 	s->cap = cap;
@@ -51,9 +52,15 @@ sstr_append(sstr* s, char* data) {
 }
 
 void
-sstr_set(sstr* s, char* data) {
+sstr_reset(sstr* s) {
+	printf("sstr_reset\n");
 	s->len = 0;
 	s->buf[0] = 0;
+}
+
+void
+sstr_set(sstr* s, char* data) {
+	sstr_reset(s);
 	sstr_append(s, data);
 }
 
@@ -136,8 +143,7 @@ typedef struct {
 	char v[32];
 } Param;
 
-// Return value is "ok".
-int
+int // ok
 fillGetParams(Param* getParams, char* endpoint) {
 	char* qmark = strchr(endpoint, '?');
 	if (qmark == NULL) {
@@ -181,15 +187,12 @@ params_get(Param* params, char* key) {
 // Basically a golang-style http.Request struct that will be cleared and reused by each thread.
 #define HTTPREQ_RESPONSE_MAX_SIZE 2048
 typedef struct {
+	sstr *response, *response2;
 	char request_buf[HTTPREQ_RESPONSE_MAX_SIZE],
 	     request_scratch1[HTTPREQ_RESPONSE_MAX_SIZE],
-	     response_body[HTTPREQ_RESPONSE_MAX_SIZE],
-	     response_scratch1[HTTPREQ_RESPONSE_MAX_SIZE],
 	     http_method[8], endpoint[256], http_version[16],
 	     errmsg[256];
 	u16 route;
-	u16 response_body_len;
-	u16 response_scratch1_len;
 	Param getParams[20];
 	Param postParams[20];
 	Param request_headers[20];
@@ -198,67 +201,18 @@ typedef struct {
 
 void
 httpreq_clear(httpreq* req) {
+	sstr_reset(req->response);
+	sstr_reset(req->response2);
 	req->request_buf[0] = 0;
 	req->request_scratch1[0] = 0;
-	req->response_body[0] = 0;
-	req->response_scratch1[0] = 0;
 	req->http_method[0] = 0;
 	req->endpoint[0] = 0;
 	req->http_version[0] = 0;
 	req->errmsg[0] = 0;
 	req->route = 0;
-	req->response_body_len = 0;
-	req->response_scratch1_len = 0;
 	req->getParams[0].k[0] = 0;
 	req->postParams[0].k[0] = 0;
 	req->request_headers[0].k[0] = 0;
-}
-
-// Returns "ok"
-int
-httpreq_response_appendf(httpreq* req, int body_or_scratch1, char* fmt, ...) {
-	// buffer
-	// len
-	char* buffer;
-	u16* len;
-	switch (body_or_scratch1) {
-		case 0:
-			buffer = req->response_body;
-			len = &req->response_body_len;
-			break;
-		case 1:
-			buffer = req->response_scratch1;
-			len = &req->response_scratch1_len;
-			break;
-	}
-
-	size_t max_size = HTTPREQ_RESPONSE_MAX_SIZE;
-	size_t curr_len = *len;
-	if (curr_len > max_size-1) {
-		sprintf(req->errmsg, "Response-body filled up");
-		return 0;
-	}
-	size_t available_space = max_size - curr_len - 1;
-	va_list args;
-	va_start(args, fmt);
-	int written = vsnprintf(
-		buffer + curr_len,
-		available_space,
-		fmt,
-		args
-	);
-	va_end(args);
-	if (written <= 0) {
-		sprintf(req->errmsg, "Didn't write anything. in:%s\n", fmt);
-		return 0;
-	}
-	size_t actual_written = (size_t)written;
-	if (actual_written > available_space) {
-		*len = max_size;
-	} else {
-		*len += actual_written;
-	}
-	return 1;
 }
 
 httpreq requests[4];
@@ -273,6 +227,7 @@ write_all(int socket, char* buffer, u16 len) {
 		ssize_t just_wrote = write(socket, ptr, len-written);
 		written += just_wrote;
 	}
+	// TODO print out response size. We'll use this to set the buffer to a good default.
 	return 1;
 }
 
@@ -294,15 +249,15 @@ parse_route(u16* route, char* endpoint) {
 // Write a string out as the HTTP response.
 void
 write_error(int client_socket, httpreq* request, int http_status, char* errmsg) {
-	httpreq_response_appendf(
-		request,
-		0,
-		"HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
+	char *a1;
+	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
 		http_status,
 		strlen(errmsg),
 		errmsg
 	);
-	write_all(client_socket, request->response_body, request->response_body_len);
+	sstr_set(request->response, a1);
+	write_all(client_socket, request->response->buf, request->response->len);
+	free(a1);
 }
 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
@@ -312,6 +267,7 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 	int bytes_read = read(client_socket, buf, 2047);
 	Param* getParams = request->getParams;
 
+	// TODO print out request size. Use this to pick a good default in the future.
 	if (bytes_read == 2047) {
 		write_error( client_socket, request, 413, "Request too large. Max is 2KB.");
 		return 0;
@@ -374,13 +330,15 @@ db_tx_count(PGconn* db) {
 }
 
 // Say hello to the GET-name.
-char*
+void
 hello_name(httpreq* request) {
 	printf("hello_name\n");
 	char* name = params_get(request->getParams, "name");
 	u16 tx_count = db_tx_count(request->db);
-	httpreq_response_appendf(request, 1, "<p>Hello, %s!</p> <p>There are %d transactions in the db.</p>", name, tx_count);
-	return request->response_scratch1;
+	char* a1;
+	asprintf(&a1, "<p>Hello, %s!</p> <p>There are %d transactions in the db.</p>", name, tx_count);
+	sstr_set(request->response2, a1);
+	free(a1);
 }
 
 char*
@@ -420,8 +378,6 @@ handle_request(int thread_idx, int client_socket, httpreq* request) {
 		return NULL;
 	}
 
-	char* response = request->response_body;
-
 	switch (request->route) {
 		case 0:
 			handle_home(request);
@@ -432,16 +388,12 @@ handle_request(int thread_idx, int client_socket, httpreq* request) {
 		default:
 	}
 
-	httpreq_response_appendf(
-		request,
-		0,
-		"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n",
-		request->response_scratch1_len);
-	memcpy(request->response_body + request->response_body_len,
-		request->response_scratch1,
-		request->response_scratch1_len);
-	request->response_body_len += request->response_scratch1_len;
-	write_all(client_socket, response, request->response_body_len);
+	char *a1;
+	asprintf(&a1,		"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n",
+			request->response2->len);
+	sstr_set(request->response, a1);
+	sstr_append(request->response, request->response2->buf);
+	write_all(client_socket, request->response->buf, request->response->len);
 	return NULL;
 }
 
@@ -499,6 +451,11 @@ listen_on_port() {
 
 int
 main() {
+	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
+		httpreq *req = &requests[i];
+		req->response = sstr_new(2048);
+		req->response2 = sstr_new(2048);
+	}
 
 	// Set up thread pool
 	// param pool_size uint
