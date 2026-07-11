@@ -271,7 +271,6 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 		write_error( client_socket, request, 422, "Couldn't parse route from endpoint.");
 		return 0;
 	}
-	printf("route:%d\n", request->route);
 
 	ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
@@ -280,7 +279,6 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 	}
 
 	// TODO post params
-	// From endpoint, get route as int.
 
 	return 1;
 }
@@ -297,6 +295,14 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 
 	char* response = request->response_body;
 
+	char* resp = "default";
+	switch (request->route) {
+		case 1:
+			resp = "ooga";
+			break;
+		default:
+	}
+	// TODO
 	// Switch on route
 	// Collect response string from route-handler
 	// Return response to client
@@ -304,7 +310,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 	httpreq_response_appendf(
 		request,
 		1,
-		"111Hello bob1234567891"
+		resp
 	);
 	httpreq_response_appendf(
 		request,
