@@ -362,9 +362,7 @@ read_file(char* path) {
 void
 handle_home(httpreq* request) {
 	char* body = read_file("templates/home.html");
-	// TODO
-	// Read from file "templates/home.html"
-	// set response scratch
+	sstr_set(request->response2, body);
 }
 
 // This function is called from a threadpool worker, to handle the request.
@@ -389,11 +387,12 @@ handle_request(int thread_idx, int client_socket, httpreq* request) {
 	}
 
 	char *a1;
-	asprintf(&a1,		"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n",
-			request->response2->len);
+	asprintf(&a1, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n",
+		request->response2->len);
 	sstr_set(request->response, a1);
 	sstr_append(request->response, request->response2->buf);
 	write_all(client_socket, request->response->buf, request->response->len);
+	free(a1);
 	return NULL;
 }
 
