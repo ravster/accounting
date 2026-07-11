@@ -11,7 +11,7 @@
 // clang server.c -o run -Wall -Wextra -lpthread && ./run
 // gcc -o run -Wall -Wextra -lpthread -lpq server.c && ./run
 // Test with
-// echo "fff\t1" | nc localhost 3003
+// curl -v 'http://localhost:3002/1?name=Michael_Smith'
 
 #define PORT 3002
 #define THREAD_POOL_SIZE 4
@@ -79,8 +79,8 @@ queue_pop(queue_ringbuffer_t* queue) {
 // END INT QUEUE implementation
 
 typedef struct {
-	char k[31];
-	char v[51];
+	char k[32];
+	char v[32];
 } Param;
 
 // Return value is "ok".
@@ -101,9 +101,10 @@ fillGetParams(Param* getParams, char* endpoint) {
 	while (paramPair != NULL) {
 		char* k_or_v = strtok_r(paramPair, "=", &splitEqualSavePtr);
 		Param* param = &getParams[count];
-		strncpy(param->k, k_or_v, 20);
+		// TODO this can just be scanf, duh, since we know the format.
+		strncpy(param->k, k_or_v, 31);
 		k_or_v = strtok_r(NULL, "=", &splitEqualSavePtr);
-		strncpy(param->v, k_or_v, 50);
+		strncpy(param->v, k_or_v, 31);
 
 		++count;
 		if (count == paramPairCount) {
@@ -114,6 +115,24 @@ fillGetParams(Param* getParams, char* endpoint) {
 	}
 	return 1;
 }
+
+char*
+params_get(Param* params, char* key) {
+	for (int i = 0; i<20; i++) {
+		Param* param = &params[i];
+		char* k = param->k;
+		if (k[0] == 0) {
+			break; // No more params
+		}
+		if (strcmp(k, key) != 0) {
+			continue; // Not a match
+		}
+		return param->v;
+	}
+	return NULL;
+}
+
+// END PARAM section
 
 // Basically a golang-style http.Request struct that will be cleared and reused by each thread.
 #define HTTPREQ_RESPONSE_MAX_SIZE 2048
@@ -283,6 +302,14 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 	return 1;
 }
 
+// Say hello to the GET-name.
+char*
+hello_name(httpreq* request) {
+	char* name = params_get(request->getParams, "name");
+	httpreq_response_appendf(request, 1, "Hello, %s!", name);
+	return request->response_scratch1;
+}
+
 // This function is called from a threadpool worker, to handle the request.
 void*
 handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) {
@@ -298,20 +325,11 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 	char* resp = "default";
 	switch (request->route) {
 		case 1:
-			resp = "ooga";
+			resp = hello_name(request);
 			break;
 		default:
 	}
-	// TODO
-	// Switch on route
-	// Collect response string from route-handler
-	// Return response to client
 
-	httpreq_response_appendf(
-		request,
-		1,
-		resp
-	);
 	httpreq_response_appendf(
 		request,
 		0,
