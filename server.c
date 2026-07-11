@@ -9,8 +9,7 @@
 #include <arpa/inet.h>
 #include <libpq-fe.h>
 
-// clang server.c -o run -Wall -Wextra -lpthread && ./run
-// gcc -o run -Wall -Wextra -lpthread -lpq server.c && ./run
+// gcc -o run -Wall -Wextra -lpthread -lpq -ljemalloc server.c && ./run
 // Test with
 // curl -v 'http://localhost:3002/1?name=Michael_Smith'
 
@@ -332,6 +331,32 @@ hello_name(httpreq* request) {
 	return request->response_scratch1;
 }
 
+char*
+read_file(char* path) {
+	printf("read_file\n");
+	FILE* file = fopen(path, "rb");
+	if (file == NULL) {
+		printf("file null\n");
+	}
+	fseek(file, 0, SEEK_END);
+	long file_size = ftell(file);
+	fseek(file, 0, SEEK_SET);
+	char* buf = malloc(file_size + 1);
+	// TODO free
+	size_t bytes_read = fread(buf, 1, file_size, file);
+	buf[bytes_read] = 0;
+	fclose(file);
+	return buf;
+}
+
+void
+handle_home(httpreq* request) {
+	char* body = read_file("templates/home.html");
+	// TODO
+	// Read from file "templates/home.html"
+	// set response scratch
+}
+
 // This function is called from a threadpool worker, to handle the request.
 void*
 handle_request(int thread_idx, int client_socket, httpreq* request) {
@@ -346,6 +371,9 @@ handle_request(int thread_idx, int client_socket, httpreq* request) {
 	char* response = request->response_body;
 
 	switch (request->route) {
+		case 0:
+			handle_home(request);
+			break;
 		case 1:
 			hello_name(request);
 			break;
