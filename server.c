@@ -18,7 +18,59 @@
 #define QUEUE_MAX_SIZE 16
 
 typedef uint16_t u16;
-typedef uint8_t u8;
+
+// BEGIN string implementation
+typedef struct {
+	char* buf;
+	size_t len;
+	size_t cap;
+} sstr;
+
+sstr*
+sstr_new(size_t cap) {
+	sstr* s = malloc(sizeof(sstr));
+	s->len = 0;
+	s->cap = cap;
+	s->buf = malloc(cap + 1);
+	s->buf[0]=0;
+	return s;
+}
+
+void
+sstr_append(sstr* s, char* data) {
+	size_t data_len = strlen(data);
+	size_t new_total_len = s->len + data_len;
+	if (s->cap < 1+ new_total_len) {
+		size_t new_cap = new_total_len * 2;
+		s->buf = realloc(s->buf, new_cap);
+		s->cap = new_cap;
+	}
+	memcpy(s->buf + s->len, data, data_len);
+	s->len = new_total_len;
+	s->buf[new_total_len] = 0;
+}
+
+void
+sstr_set(sstr* s, char* data) {
+	s->len = 0;
+	s->buf[0] = 0;
+	sstr_append(s, data);
+}
+
+void
+sstr_prepend(sstr* s, char* data) {
+	size_t data_len = strlen(data);
+	size_t new_total_len = s->len + data_len;
+	if (s->cap < 1+ new_total_len) {
+		size_t new_cap = new_total_len * 2;
+		s->buf = realloc(s->buf, new_cap);
+		s->cap = new_cap;
+	}
+	memmove(s->buf + data_len, s->buf, s->len + 1); // With the orig null-term
+	memcpy(s->buf, data, data_len);
+	s->len += data_len;
+}
+// END string implementation
 
 // This queue is implemented as a ring-buffer.
 // Producer: Main thread. Accepts new incoming requests and writes the socket to the tail.
