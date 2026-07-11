@@ -1,3 +1,4 @@
+#include <time.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -18,6 +19,7 @@
 #define QUEUE_MAX_SIZE 16
 
 typedef uint16_t u16;
+typedef uint8_t u8;
 
 // This queue is implemented as a ring-buffer.
 // Producer: Main thread. Accepts new incoming requests and writes the socket to the tail.
@@ -91,12 +93,9 @@ fillGetParams(Param* getParams, char* endpoint) {
 		return 1;
 	}
 	char* after_qmark = qmark+1;
-	
 	int paramPairCount = 20;
 	char* paramPairSavePtr;
-	int count = 0;
 	char* paramPair = strtok_r(after_qmark, "&", &paramPairSavePtr);
-
 	for (int count = 0; (count < paramPairCount) && (paramPair != NULL); count++) {
 		Param* param = &getParams[count];
 		int sscanf_result = sscanf(paramPair, "%31[^=]=%31s", param->k, param->v);
@@ -105,7 +104,6 @@ fillGetParams(Param* getParams, char* endpoint) {
 			printf("GET param sscanf processing err.\n");
 			return 0;
 		}
-
 		paramPair = strtok_r(NULL, "&", &paramPairSavePtr);
 	}
 	return 1;
@@ -144,11 +142,25 @@ typedef struct {
 	Param getParams[20];
 	Param postParams[20];
 	Param request_headers[20];
+	PGconn* db;
 } httpreq;
 
 void
 httpreq_clear(httpreq* req) {
-	memset(req, 0, sizeof(httpreq));
+	req->request_buf[0] = 0;
+	req->request_scratch1[0] = 0;
+	req->response_body[0] = 0;
+	req->response_scratch1[0] = 0;
+	req->http_method[0] = 0;
+	req->endpoint[0] = 0;
+	req->http_version[0] = 0;
+	req->errmsg[0] = 0;
+	req->route = 0;
+	req->response_body_len = 0;
+	req->response_scratch1_len = 0;
+	req->getParams[0].k[0] = 0;
+	req->postParams[0].k[0] = 0;
+	req->request_headers[0].k[0] = 0;
 }
 
 // Returns "ok"
@@ -247,10 +259,7 @@ int // OK
 parse_request(httpreq* request, int client_socket, int thread_idx) {
 	char* buf =  request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
-	char* response = request->response_body;
 	Param* getParams = request->getParams;
-
-	printf("[thread:%d] Received\n%s\n", thread_idx, buf);
 
 	if (bytes_read == 2047) {
 		write_error( client_socket, request, 413, "Request too large. Max is 2KB.");
@@ -297,17 +306,36 @@ parse_request(httpreq* request, int client_socket, int thread_idx) {
 	return 1;
 }
 
+unsigned long
+db_tx_count(PGconn* db) {
+	printf("db_tx_count\n");
+	PGresult* res = PQexec(db, "select count(1) from transactions;");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		printf("resstat:%d\n", PQresultStatus(res));
+		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
+		PQclear(res);
+		return 0;
+	}
+	char* count_str = PQgetvalue(res, 0, 0);
+	unsigned long out = strtoul(count_str, NULL, 10);
+	PQclear(res);
+	return out;
+}
+
 // Say hello to the GET-name.
 char*
 hello_name(httpreq* request) {
+	printf("hello_name\n");
 	char* name = params_get(request->getParams, "name");
-	httpreq_response_appendf(request, 1, "Hello, %s!", name);
+	u16 tx_count = db_tx_count(request->db);
+	httpreq_response_appendf(request, 1, "<p>Hello, %s!</p> <p>There are %d transactions in the db.</p>", name, tx_count);
 	return request->response_scratch1;
 }
 
 // This function is called from a threadpool worker, to handle the request.
 void*
-handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) {
+handle_request(int thread_idx, int client_socket, httpreq* request) {
+	printf("handle_request\n");
 	httpreq_clear(request);
 	int ok = parse_request(request, client_socket, thread_idx);
 	if (!ok) {
@@ -317,10 +345,9 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 
 	char* response = request->response_body;
 
-	char* resp = "default";
 	switch (request->route) {
 		case 1:
-			resp = hello_name(request);
+			hello_name(request);
 			break;
 		default:
 	}
@@ -340,6 +367,7 @@ handle_request(PGconn* db, int thread_idx, int client_socket, httpreq* request) 
 
 void*
 threadpool_worker(void* arg) {
+	printf("threadpool_worker\n");
 	int thread_idx = *((int*)arg);
 	free(arg);
 	// Each thread gets it's own connection because these conns are not thread-safe.
@@ -354,11 +382,19 @@ threadpool_worker(void* arg) {
 
 	httpreq* request;
 	request = &requests[thread_idx];
+	request->db = db;
 
 	while (1) {
 		// Blocking call
 		int client_socket = queue_pop(&client_socket_queue);
-		handle_request(db, thread_idx, client_socket, request);
+		struct timespec start_time;
+		clock_gettime(CLOCK_MONOTONIC, &start_time);
+		handle_request(thread_idx, client_socket, request);
+		struct timespec end_time;
+		clock_gettime(CLOCK_MONOTONIC, &end_time);
+		double elapsed_ms = (double)(end_time.tv_sec - start_time.tv_sec) * 1000.0 +
+			(double)(end_time.tv_nsec - start_time.tv_nsec) / 1000000.0;
+		printf("DONE request:%.3f ms\n", elapsed_ms);
 	}
 	PQfinish(db);
 	return NULL;
