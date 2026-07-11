@@ -97,8 +97,7 @@ fillGetParams(Param* getParams, char* endpoint) {
 	int count = 0;
 	char* paramPair = strtok_r(after_qmark, "&", &paramPairSavePtr);
 
-	// TODO for loop duh
-	while (paramPair != NULL) {
+	for (int count = 0; (count < paramPairCount) && (paramPair != NULL); count++) {
 		Param* param = &getParams[count];
 		int sscanf_result = sscanf(paramPair, "%31[^=]=%31s", param->k, param->v);
 		if (sscanf_result != 2) {
@@ -107,11 +106,6 @@ fillGetParams(Param* getParams, char* endpoint) {
 			return 0;
 		}
 
-		++count;
-		if (count == paramPairCount) {
-			// We allocated only this much.
-			break;
-		}
 		paramPair = strtok_r(NULL, "&", &paramPairSavePtr);
 	}
 	return 1;
