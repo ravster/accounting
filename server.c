@@ -38,10 +38,18 @@ sstr_new(size_t cap) {
 }
 
 void
+sstr_free(sstr* s) {
+	printf("sstr_free\n");
+	free(s->buf);
+	free(s);
+}
+
+void
 sstr_append(sstr* s, char* data) {
 	size_t data_len = strlen(data);
 	size_t new_total_len = s->len + data_len;
 	if (s->cap < 1+ new_total_len) {
+		printf("sstr_append: raising cap\n");
 		size_t new_cap = new_total_len * 2;
 		s->buf = realloc(s->buf, new_cap);
 		s->cap = new_cap;
@@ -220,14 +228,14 @@ httpreq requests[4];
 
 // Have to loop because "write" isn't guaranteed to do it all in one syscall. It tells us how much it did.
 int // ok
-write_all(int socket, char* buffer, u16 len) {
+write_all(int socket, char* buffer, size_t len) {
 	char* ptr = buffer;
 	u16 written = 0;
 	while (written < len) {
 		ssize_t just_wrote = write(socket, ptr, len-written);
 		written += just_wrote;
 	}
-	// TODO print out response size. We'll use this to set the buffer to a good default.
+	printf("metric_response_size:%lu\n", len);
 	return 1;
 }
 
@@ -262,7 +270,7 @@ write_error(int client_socket, httpreq* request, int http_status, char* errmsg) 
 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
-parse_request(httpreq* request, int client_socket, int thread_idx) {
+parse_request(httpreq* request, int client_socket) {
 	char* buf =  request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
 	Param* getParams = request->getParams;
@@ -342,8 +350,8 @@ hello_name(httpreq* request) {
 }
 
 char*
-read_file(char* path) {
-	printf("read_file\n");
+read_file_new_string(char* path) {
+	printf("read_file_new_string\n");
 	FILE* file = fopen(path, "rb");
 	if (file == NULL) {
 		printf("file null\n");
@@ -352,7 +360,6 @@ read_file(char* path) {
 	long file_size = ftell(file);
 	fseek(file, 0, SEEK_SET);
 	char* buf = malloc(file_size + 1);
-	// TODO free
 	size_t bytes_read = fread(buf, 1, file_size, file);
 	buf[bytes_read] = 0;
 	fclose(file);
@@ -361,16 +368,85 @@ read_file(char* path) {
 
 void
 handle_home(httpreq* request) {
-	char* body = read_file("templates/home.html");
+	char* body = read_file_new_string("templates/home.html");
 	sstr_set(request->response2, body);
+	free(body);
+}
+
+char*
+resolve_account_type(char* account_type_enum_s) {
+	u16 account_type_enum = strtoul(account_type_enum_s, NULL, 10);
+	char* out;
+	switch (account_type_enum) {
+		case 0:
+			out = "Income";
+			break;
+		case 1:
+			out = "Expense";
+			break;
+		case 2:
+			out = "Asset";
+			break;
+		case 3:
+			out = "Liability";
+			break;
+		default:
+			printf("Got an unknown account_type_enum_s:%s\n", account_type_enum_s);
+			out = "Unknown";
+	}
+	return out;
+}
+
+sstr*
+tr_of_every_account(PGconn* db) {
+	printf("tr_of_every_account1\n");
+	PGresult* res = PQexec(db, "select id, name, type from accounts;");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		printf("resstat:%d\n", PQresultStatus(res));
+		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
+		PQclear(res);
+		return 0;
+	}
+	u16 total_rows = PQntuples(res);
+	sstr *out = sstr_new(512);
+	for (u16 i = 0; i < total_rows; i++) {
+		char* temp;
+		char* type = resolve_account_type(PQgetvalue(res, i, 2));
+		asprintf(&temp,
+			"<tr>"
+			  "<td>%s</td>"
+			  "<td>%s</td>"
+			  "<td>%s</td>"
+			"</tr>",
+			PQgetvalue(res, i, 0),
+			PQgetvalue(res, i, 1),
+			type
+		);
+		sstr_append(out, temp);
+	}
+	PQclear(res);
+	return out;
+}
+
+void
+listAccounts(httpreq* request) {
+	printf("listAccounts\n");
+	char* body = read_file_new_string("templates/listAccounts.html");
+	char* a1;
+	sstr* trs = tr_of_every_account(request->db);
+	asprintf(&a1, body, trs->buf);
+	sstr_set(request->response2, a1);
+	sstr_free(trs);
+	free(a1);
+	free(body);
 }
 
 // This function is called from a threadpool worker, to handle the request.
 void*
-handle_request(int thread_idx, int client_socket, httpreq* request) {
+handle_request(int client_socket, httpreq* request) {
 	printf("handle_request\n");
 	httpreq_clear(request);
-	int ok = parse_request(request, client_socket, thread_idx);
+	int ok = parse_request(request, client_socket);
 	if (!ok) {
 		// parse_request will send response to client.
 		return NULL;
@@ -382,6 +458,9 @@ handle_request(int thread_idx, int client_socket, httpreq* request) {
 			break;
 		case 1:
 			hello_name(request);
+			break;
+		case 2:
+			listAccounts(request);
 			break;
 		default:
 	}
@@ -420,7 +499,7 @@ threadpool_worker(void* arg) {
 		int client_socket = queue_pop(&client_socket_queue);
 		struct timespec start_time;
 		clock_gettime(CLOCK_MONOTONIC, &start_time);
-		handle_request(thread_idx, client_socket, request);
+		handle_request(client_socket, request);
 		struct timespec end_time;
 		clock_gettime(CLOCK_MONOTONIC, &end_time);
 		double elapsed_ms = (double)(end_time.tv_sec - start_time.tv_sec) * 1000.0 +
@@ -452,8 +531,8 @@ int
 main() {
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
 		httpreq *req = &requests[i];
-		req->response = sstr_new(2048);
-		req->response2 = sstr_new(2048);
+		req->response = sstr_new(128);
+		req->response2 = sstr_new(128);
 	}
 
 	// Set up thread pool
