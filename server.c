@@ -374,26 +374,20 @@ handle_home(httpreq* request) {
 }
 
 char*
-resolve_account_type(char* account_type_enum_s) {
+resolve_account_type_new_str(char* account_type_enum_s) {
 	u16 account_type_enum = strtoul(account_type_enum_s, NULL, 10);
+	char* actual_acct_type_enum[4] = {
+		"Income",
+		"Expense",
+		"Asset",
+		"Liability"
+	};
 	char* out;
-	switch (account_type_enum) {
-		case 0:
-			out = "Income";
-			break;
-		case 1:
-			out = "Expense";
-			break;
-		case 2:
-			out = "Asset";
-			break;
-		case 3:
-			out = "Liability";
-			break;
-		default:
-			printf("Got an unknown account_type_enum_s:%s\n", account_type_enum_s);
-			out = "Unknown";
+	if (account_type_enum > 3) {
+		printf("Got an unknown account_type_enum_s:%s\n", account_type_enum_s);
+		out = "Unknown";
 	}
+	out = strdup(actual_acct_type_enum[account_type_enum]);
 	return out;
 }
 
@@ -409,20 +403,22 @@ tr_of_every_account(PGconn* db) {
 	}
 	u16 total_rows = PQntuples(res);
 	sstr *out = sstr_new(512);
+	char* temp;
 	for (u16 i = 0; i < total_rows; i++) {
-		char* temp;
-		char* type = resolve_account_type(PQgetvalue(res, i, 2));
+		char* type = resolve_account_type_new_str(PQgetvalue(res, i, 2));
 		asprintf(&temp,
 			"<tr>"
 			  "<td>%s</td>"
 			  "<td>%s</td>"
 			  "<td>%s</td>"
-			"</tr>",
+			"</tr>\n",
 			PQgetvalue(res, i, 0),
 			PQgetvalue(res, i, 1),
 			type
 		);
 		sstr_append(out, temp);
+		free(type);
+		free(temp);
 	}
 	PQclear(res);
 	return out;
