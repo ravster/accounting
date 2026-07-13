@@ -457,7 +457,7 @@ ledger_newest_30_newstr(PGconn* db) {
 		" LIMIT 30;");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
+		printf("Couldn't get ledger_newest_30_newstr:%s\n", PQresultErrorMessage(res));
 		PQclear(res);
 		return 0;
 	}
@@ -484,9 +484,10 @@ ledger_newest_30_newstr(PGconn* db) {
 		if (written_to_temp >= 1024) {
 			printf("ERR: ledger_newest_30_newstr: tr truncated to 1024: %s\n", temp);
 		}
+		printf("wrote temp:%s\n", temp);
 		sstr_append(out, temp);
 	}
-	printf("metric: ledger_newest_30_newstr: out_len:%d\n", out->len);
+	printf("metric: ledger_newest_30_newstr: out_len:%ld\n", out->len);
 	free(temp);
 	PQclear(res);
 	return out;
@@ -496,17 +497,43 @@ ledger_newest_30_newstr(PGconn* db) {
 // {{range $k, $v := .accounts }}
 // <option value="{{$k}}">{{$v}}</option>
 // {{end}}
-sstr*
-account_selection_options_newstr(PGconn* db) {
-	printf("account_selection_options_newstr\n");
-	sstr *out = sstr_new(4096);
-	sstr_set(out, 
-"<option value=\"cash\">Cash</option>\n"
-"<option value=\"food\">Food</option>\n"
-"<option value=\"rent\">Rent</option>\n"
-	);
-	printf("metric: account_selection_options_newstr: out_len:%d\n", out->len);
-	return out;
+sstr* account_selection_options_;
+char*
+account_selection_options(PGconn* db) {
+	printf("account_selection_options\n");
+	if (account_selection_options_ != NULL) {
+		return account_selection_options_->buf;
+	}
+	// Memoize this. It should pull the data from the db the first time and write to a str.
+	// After that it should always return the str. After a new account is created, the program
+	// should be restarted.
+
+	account_selection_options_ = sstr_new(1024);
+	sstr* out = account_selection_options_;
+	PGresult* res = PQexec(db, "SELECT id, name from accounts;");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		printf("resstat:%d\n", PQresultStatus(res));
+		printf("Couldn't get account_selection_options:%s\n", PQresultErrorMessage(res));
+		PQclear(res);
+		return 0;
+	}
+	u16 total_rows = PQntuples(res);
+	char* temp = malloc(1024); temp[0]=0;
+	for (u16 i = 0; i < total_rows; i++) {
+		size_t written_to_temp = snprintf(temp, 1024,
+			"<option value=\"%s\">%s</option>",
+			PQgetvalue(res, i, 0),
+			PQgetvalue(res, i, 1)
+		);
+		if (written_to_temp >= 1024) {
+			printf("ERR: account_selection_options: temp truncated to 1024: %s\n", temp);
+		}
+		sstr_append(out, temp);
+	}
+	printf("metric: account_selection_options: out_len:%ld\n", out->len);
+	free(temp);
+	PQclear(res);
+	return account_selection_options_->buf;
 }
 
 void
@@ -517,10 +544,11 @@ listLedger(httpreq* request) {
 	// If we start writing these into response3, we wouldn't need to malloc.
 	// Then use strstr to build up response2.
 	sstr* ln30 = ledger_newest_30_newstr(request->db);
-	sstr* aso = account_selection_options_newstr(request->db);
-	asprintf(&a1, body, ln30->buf, aso->buf, aso->buf);
+	printf("ln30:%s\n", ln30->buf);
+	char* aso = account_selection_options(request->db);
+	printf("aso:%s\n", aso);
+	asprintf(&a1, body, ln30->buf, aso, aso);
 	sstr_set(request->response2, a1);
-	free(aso);
 	sstr_free(ln30);
 	free(a1);
 	free(body);
@@ -547,13 +575,17 @@ handle_request(int client_socket, httpreq* request) {
 		case 2:
 			listAccounts(request);
 			break;
+		case 3:
+			// TODO this next
+			createAccount(request);
+			break;
 		default:
 			write_error(client_socket, request, 404, "Not found");
 			return NULL;
 	}
 
 	char *a1;
-	asprintf(&a1, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n",
+	asprintf(&a1, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n",
 		request->response2->len);
 	sstr_set(request->response, a1);
 	sstr_append(request->response, request->response2->buf);
