@@ -151,24 +151,6 @@ typedef struct {
 	char v[32];
 } Param;
 
-int // ok
-fillGetParams(char* getParams, char* endpoint) {
-	printf("fillGetParams\n");
-	getParams[0]=0;
-	char* qmark = strchr(endpoint, '?');
-	if (qmark == NULL) { return 1; }
-	char* after_qmark = qmark+1;
-	size_t new_len = strlen(after_qmark);
-	printf("zz1\n");
-	realloc(getParams, new_len + 1);
-	printf("zz1\n");
-	strncpy(getParams, after_qmark, new_len);
-	printf("zz1\n");
-	getParams[new_len]=0;
-	printf("zz1\n");
-	return 1;
-}
-
 char*
 params_get2_newstr(char* haystack, char* needle) {
 	if (strlen(haystack) == 0) { return NULL; }
@@ -212,6 +194,19 @@ httpreq_clear(httpreq* req) {
 	req->route = 0;
 	req->postParams[0].k[0] = 0;
 	req->request_headers[0].k[0] = 0;
+}
+
+int // ok
+fillGetParams(httpreq* req) {
+	printf("fillGetParams\n");
+	char* qmark = strchr(req->endpoint, '?');
+	if (qmark == NULL) { return 1; }
+	char* after_qmark = qmark+1;
+	size_t new_len = strlen(after_qmark);
+	req->getP = realloc(req->getP, new_len + 1);
+	// +1 so that the target is null-terminated .
+	strncpy(req->getP, after_qmark, new_len+1);
+	return 1;
 }
 
 httpreq requests[4];
@@ -286,7 +281,7 @@ parse_request(httpreq* request, int client_socket) {
 
 	char* first_line = request->request_scratch1;
 	strncpy(first_line, buf, line_len);
-	printf("%s\n", first_line);
+	printf("first_line:%s\n", first_line);
 	char* http_method = request->http_method;
 	char* endpoint = request->endpoint;
 	char* http_version = request->http_version;
@@ -302,7 +297,7 @@ parse_request(httpreq* request, int client_socket) {
 		return 0;
 	}
 
-	ok = fillGetParams(request->getP, endpoint);
+	ok = fillGetParams(request);
 	if (!ok) {
 		write_error( client_socket, request, 422, "Couldn't parse GET params.");
 		return 0;
