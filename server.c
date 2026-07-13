@@ -174,6 +174,35 @@ fillGetParams(Param* getParams, char* endpoint) {
 	return 1;
 }
 
+
+int // ok
+fillPostParams(httpreq* req) {
+	// Get request body
+	// Get postparams
+	// parse body
+	// write to params array
+	// I'm starting to think params should be a delimited string just because it is so small and also the usage pattern is so well known. Use US (ascii-31) and RS (ascii-30). After that it's all about strchr.
+	char* qmark = strchr(endpoint, '?');
+	if (qmark == NULL) {
+		return 1;
+	}
+	char* after_qmark = qmark+1;
+	int paramPairCount = 20;
+	char* paramPairSavePtr;
+	char* paramPair = strtok_r(after_qmark, "&", &paramPairSavePtr);
+	for (int count = 0; (count < paramPairCount) && (paramPair != NULL); count++) {
+		Param* param = &getParams[count];
+		int sscanf_result = sscanf(paramPair, "%31[^=]=%31s", param->k, param->v);
+		if (sscanf_result != 2) {
+			printf("paramPair:%s\nk:%s\nv:%s\n", paramPair, param->k, param->v);
+			printf("GET param sscanf processing err.\n");
+			return 0;
+		}
+		paramPair = strtok_r(NULL, "&", &paramPairSavePtr);
+	}
+	return 1;
+}
+
 char*
 params_get(Param* params, char* key) {
 	for (int i = 0; i<20; i++) {
@@ -314,7 +343,13 @@ parse_request(httpreq* request, int client_socket) {
 
 	ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
-		write_error( client_socket, request, 404, "Couldn't parse GET params.");
+		write_error( client_socket, request, 422, "Couldn't parse GET params.");
+		return 0;
+	}
+
+	ok = fillPostParams(PostParams, endpoint);
+	if (!ok) {
+		write_error( client_socket, request, 422, "Couldn't parse POST params.");
 		return 0;
 	}
 
@@ -554,6 +589,21 @@ listLedger(httpreq* request) {
 	free(body);
 }
 
+void
+createAccount(httpreq* request) {
+	printf("createAccount\n");
+	// Take post params
+	// Write to DB
+	// Redirect back
+	char* a1;
+	sstr* trs = tr_of_every_account(request->db);
+	asprintf(&a1, body, trs->buf);
+	sstr_set(request->response2, a1);
+	sstr_free(trs);
+	free(a1);
+	free(body);
+}
+
 // This function is called from a threadpool worker, to handle the request.
 void*
 handle_request(int client_socket, httpreq* request) {
@@ -576,7 +626,6 @@ handle_request(int client_socket, httpreq* request) {
 			listAccounts(request);
 			break;
 		case 3:
-			// TODO this next
 			createAccount(request);
 			break;
 		default:
