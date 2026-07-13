@@ -29,16 +29,12 @@
       <select required name="debit_account_id">
 	      <option value="">Debit</option>
 	      <!-- aso -->
-	      {{range $k, $v := .accounts }}
-	      <option value="{{$k}}">{{$v}}</option>
-	      {{end}}
+	      %s
       </select>
       <select required name="credit_account_id">
 	      <option value="">Credit</option>
 	      <!-- aso -->
-	      {{range $k, $v := .accounts }}
-	      <option value="{{$k}}">{{$v}}</option>
-	      {{end}}
+	      %s
       </select>
     <input name="note" required type="text" placeholder="Note"/>
     <input name="amount" required type="number" step="0.01" min="0.01" placeholder="USD 0.00"/>

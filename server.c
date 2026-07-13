@@ -501,9 +501,9 @@ account_selection_options_newstr(PGconn* db) {
 	printf("account_selection_options_newstr\n");
 	sstr *out = sstr_new(4096);
 	sstr_set(out, 
-"<option value=\"cash\">Cash</option>"
-"<option value=\"food\">Food</option>"
-"<option value=\"rent\">Rent</option>"
+"<option value=\"cash\">Cash</option>\n"
+"<option value=\"food\">Food</option>\n"
+"<option value=\"rent\">Rent</option>\n"
 	);
 	printf("metric: account_selection_options_newstr: out_len:%d\n", out->len);
 	return out;
@@ -518,7 +518,7 @@ listLedger(httpreq* request) {
 	// Then use strstr to build up response2.
 	sstr* ln30 = ledger_newest_30_newstr(request->db);
 	sstr* aso = account_selection_options_newstr(request->db);
-	asprintf(&a1, body, ln30->buf, aso->buf);
+	asprintf(&a1, body, ln30->buf, aso->buf, aso->buf);
 	sstr_set(request->response2, a1);
 	free(aso);
 	sstr_free(ln30);
