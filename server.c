@@ -152,73 +152,36 @@ typedef struct {
 } Param;
 
 int // ok
-fillGetParams(Param* getParams, char* endpoint) {
+fillGetParams(char* getParams, char* endpoint) {
+	printf("fillGetParams\n");
+	getParams[0]=0;
 	char* qmark = strchr(endpoint, '?');
-	if (qmark == NULL) {
-		return 1;
-	}
+	if (qmark == NULL) { return 1; }
 	char* after_qmark = qmark+1;
-	int paramPairCount = 20;
-	char* paramPairSavePtr;
-	char* paramPair = strtok_r(after_qmark, "&", &paramPairSavePtr);
-	for (int count = 0; (count < paramPairCount) && (paramPair != NULL); count++) {
-		Param* param = &getParams[count];
-		int sscanf_result = sscanf(paramPair, "%31[^=]=%31s", param->k, param->v);
-		if (sscanf_result != 2) {
-			printf("paramPair:%s\nk:%s\nv:%s\n", paramPair, param->k, param->v);
-			printf("GET param sscanf processing err.\n");
-			return 0;
-		}
-		paramPair = strtok_r(NULL, "&", &paramPairSavePtr);
-	}
-	return 1;
-}
-
-
-int // ok
-fillPostParams(httpreq* req) {
-	// Get request body
-	// Get postparams
-	// parse body
-	// write to params array
-	// I'm starting to think params should be a delimited string just because it is so small and also the usage pattern is so well known. Use US (ascii-31) and RS (ascii-30). After that it's all about strchr.
-	char* qmark = strchr(endpoint, '?');
-	if (qmark == NULL) {
-		return 1;
-	}
-	char* after_qmark = qmark+1;
-	int paramPairCount = 20;
-	char* paramPairSavePtr;
-	char* paramPair = strtok_r(after_qmark, "&", &paramPairSavePtr);
-	for (int count = 0; (count < paramPairCount) && (paramPair != NULL); count++) {
-		Param* param = &getParams[count];
-		int sscanf_result = sscanf(paramPair, "%31[^=]=%31s", param->k, param->v);
-		if (sscanf_result != 2) {
-			printf("paramPair:%s\nk:%s\nv:%s\n", paramPair, param->k, param->v);
-			printf("GET param sscanf processing err.\n");
-			return 0;
-		}
-		paramPair = strtok_r(NULL, "&", &paramPairSavePtr);
-	}
+	size_t new_len = strlen(after_qmark);
+	printf("zz1\n");
+	realloc(getParams, new_len + 1);
+	printf("zz1\n");
+	strncpy(getParams, after_qmark, new_len);
+	printf("zz1\n");
+	getParams[new_len]=0;
+	printf("zz1\n");
 	return 1;
 }
 
 char*
-params_get(Param* params, char* key) {
-	for (int i = 0; i<20; i++) {
-		Param* param = &params[i];
-		char* k = param->k;
-		if (k[0] == 0) {
-			break; // No more params
-		}
-		if (strcmp(k, key) != 0) {
-			continue; // Not a match
-		}
-		return param->v;
-	}
-	return NULL;
+params_get2_newstr(char* haystack, char* needle) {
+	if (strlen(haystack) == 0) { return NULL; }
+	char* needle_with_US;
+	asprintf(&needle_with_US, "%s=", needle);
+	char* found = strstr(haystack, needle_with_US);
+	if (found == NULL) { return NULL; }
+	char* next = haystack + strlen(needle_with_US);
+	printf("next:%s\n", next);
+	char* record_end = strchr(next, '&');
+	char* out = strndup(next, record_end - next);
+	return out;
 }
-
 // END PARAM section
 
 // Basically a golang-style http.Request struct that will be cleared and reused by each thread.
@@ -230,7 +193,7 @@ typedef struct {
 	     http_method[8], endpoint[256], http_version[16],
 	     errmsg[256];
 	u16 route;
-	Param getParams[20];
+	char* getP;
 	Param postParams[20];
 	Param request_headers[20];
 	PGconn* db;
@@ -247,7 +210,6 @@ httpreq_clear(httpreq* req) {
 	req->http_version[0] = 0;
 	req->errmsg[0] = 0;
 	req->route = 0;
-	req->getParams[0].k[0] = 0;
 	req->postParams[0].k[0] = 0;
 	req->request_headers[0].k[0] = 0;
 }
@@ -303,7 +265,6 @@ parse_request(httpreq* request, int client_socket) {
 	printf("parse_request\n");
 	char* buf =  request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
-	Param* getParams = request->getParams;
 
 	// TODO print out request size. Use this to pick a good default in the future.
 	if (bytes_read == 2047) {
@@ -341,15 +302,9 @@ parse_request(httpreq* request, int client_socket) {
 		return 0;
 	}
 
-	ok = fillGetParams(getParams, endpoint);
+	ok = fillGetParams(request->getP, endpoint);
 	if (!ok) {
 		write_error( client_socket, request, 422, "Couldn't parse GET params.");
-		return 0;
-	}
-
-	ok = fillPostParams(PostParams, endpoint);
-	if (!ok) {
-		write_error( client_socket, request, 422, "Couldn't parse POST params.");
 		return 0;
 	}
 
@@ -374,16 +329,17 @@ db_tx_count(PGconn* db) {
 	return out;
 }
 
-// Say hello to the GET-name.
 void
 hello_name(httpreq* request) {
 	printf("hello_name\n");
-	char* name = params_get(request->getParams, "name");
+	char* name = params_get2_newstr(request->getP, "name");
+	printf("name found:%s\n", name);
 	u16 tx_count = db_tx_count(request->db);
 	char* a1;
 	asprintf(&a1, "<p>Hello, %s!</p> <p>There are %d transactions in the db.</p>", name, tx_count);
 	sstr_set(request->response2, a1);
 	free(a1);
+	free(name);
 }
 
 char*
@@ -591,17 +547,14 @@ listLedger(httpreq* request) {
 
 void
 createAccount(httpreq* request) {
+	return;
 	printf("createAccount\n");
 	// Take post params
 	// Write to DB
 	// Redirect back
 	char* a1;
-	sstr* trs = tr_of_every_account(request->db);
-	asprintf(&a1, body, trs->buf);
 	sstr_set(request->response2, a1);
-	sstr_free(trs);
 	free(a1);
-	free(body);
 }
 
 // This function is called from a threadpool worker, to handle the request.
@@ -626,7 +579,8 @@ handle_request(int client_socket, httpreq* request) {
 			listAccounts(request);
 			break;
 		case 3:
-			createAccount(request);
+			hello_name(request);
+		// 	createAccount(request);
 			break;
 		default:
 			write_error(client_socket, request, 404, "Not found");
@@ -701,6 +655,7 @@ main() {
 		httpreq *req = &requests[i];
 		req->response = sstr_new(128);
 		req->response2 = sstr_new(128);
+		req->getP = malloc(1024);
 	}
 
 	// Set up thread pool
