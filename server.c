@@ -271,6 +271,7 @@ write_error(int client_socket, httpreq* request, int http_status, char* errmsg) 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
 parse_request(httpreq* request, int client_socket) {
+	printf("parse_request\n");
 	char* buf =  request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
 	Param* getParams = request->getParams;
@@ -295,6 +296,7 @@ parse_request(httpreq* request, int client_socket) {
 
 	char* first_line = request->request_scratch1;
 	strncpy(first_line, buf, line_len);
+	printf("%s\n", first_line);
 	char* http_method = request->http_method;
 	char* endpoint = request->endpoint;
 	char* http_version = request->http_version;
@@ -306,13 +308,13 @@ parse_request(httpreq* request, int client_socket) {
 
 	int ok = parse_route(&request->route, endpoint);
 	if (!ok) {
-		write_error( client_socket, request, 422, "Couldn't parse route from endpoint.");
+		write_error( client_socket, request, 404, "Couldn't parse route from endpoint.");
 		return 0;
 	}
 
 	ok = fillGetParams(getParams, endpoint);
 	if (!ok) {
-		write_error( client_socket, request, 422, "Couldn't parse GET params.");
+		write_error( client_socket, request, 404, "Couldn't parse GET params.");
 		return 0;
 	}
 
@@ -437,6 +439,93 @@ listAccounts(httpreq* request) {
 	free(body);
 }
 
+// Should output the equivalent of 
+// <tr>
+//  <th>{{.ID}}</th>
+//  <td>{{.CreatedAt.Format "2006-01-02 15:04:05 MST"}}</td>
+//  <td>{{ index $.accounts .DebitAccountId }}</td>
+//  <td>{{ index $.accounts .CreditAccountId }}</td>
+//  <td>{{.Note}}</td>
+//  <td>${{.Amount}}</td>
+//</tr>
+sstr*
+ledger_newest_30_newstr(PGconn* db) {
+	printf("ledger_newest_30_newstr\n");
+	PGresult* res = PQexec(db, "SELECT id, created_at, debit_account_id, credit_account_id, note, amount"
+		" FROM transactions"
+		" ORDER BY created_at DESC"
+		" LIMIT 30;");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		printf("resstat:%d\n", PQresultStatus(res));
+		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
+		PQclear(res);
+		return 0;
+	}
+	u16 total_rows = PQntuples(res);
+	sstr *out = sstr_new(4096);
+	char* temp = malloc(1024); temp[0]=0;
+	for (u16 i = 0; i < total_rows; i++) {
+		size_t written_to_temp = snprintf(temp, 1024,
+			"<tr>"
+			  "<td>%s</td>"
+			  "<td>%s</td>"
+			  "<td>%s</td>"
+			  "<td>%s</td>"
+			  "<td>%s</td>"
+			  "<td>%s</td>"
+			"</tr>\n",
+			PQgetvalue(res, i, 0),
+			PQgetvalue(res, i, 1),
+			PQgetvalue(res, i, 2),
+			PQgetvalue(res, i, 3),
+			PQgetvalue(res, i, 4),
+			PQgetvalue(res, i, 5)
+		);
+		if (written_to_temp >= 1024) {
+			printf("ERR: ledger_newest_30_newstr: tr truncated to 1024: %s\n", temp);
+		}
+		sstr_append(out, temp);
+	}
+	printf("metric: ledger_newest_30_newstr: out_len:%d\n", out->len);
+	free(temp);
+	PQclear(res);
+	return out;
+}
+
+// Should output the equivalent of 
+// {{range $k, $v := .accounts }}
+// <option value="{{$k}}">{{$v}}</option>
+// {{end}}
+sstr*
+account_selection_options_newstr(PGconn* db) {
+	printf("account_selection_options_newstr\n");
+	sstr *out = sstr_new(4096);
+	sstr_set(out, 
+"<option value=\"cash\">Cash</option>"
+"<option value=\"food\">Food</option>"
+"<option value=\"rent\">Rent</option>"
+	);
+	printf("metric: account_selection_options_newstr: out_len:%d\n", out->len);
+	return out;
+}
+
+void
+listLedger(httpreq* request) {
+	printf("listLedger\n");
+	char* body = read_file_new_string("templates/ledger.html");
+	char* a1;
+	// If we start writing these into response3, we wouldn't need to malloc.
+	// Then use strstr to build up response2.
+	sstr* ln30 = ledger_newest_30_newstr(request->db);
+	sstr* aso = account_selection_options_newstr(request->db);
+	asprintf(&a1, body, ln30->buf, aso->buf);
+	sstr_set(request->response2, a1);
+	free(aso);
+	sstr_free(ln30);
+	free(a1);
+	free(body);
+}
+
 // This function is called from a threadpool worker, to handle the request.
 void*
 handle_request(int client_socket, httpreq* request) {
@@ -453,12 +542,14 @@ handle_request(int client_socket, httpreq* request) {
 			handle_home(request);
 			break;
 		case 1:
-			hello_name(request);
+			listLedger(request);
 			break;
 		case 2:
 			listAccounts(request);
 			break;
 		default:
+			write_error(client_socket, request, 404, "Not found");
+			return NULL;
 	}
 
 	char *a1;
