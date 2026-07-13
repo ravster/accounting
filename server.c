@@ -176,7 +176,7 @@ typedef struct {
 	     errmsg[256];
 	u16 route;
 	char* getP;
-	Param postParams[20];
+	char* postP;
 	Param request_headers[20];
 	PGconn* db;
 } httpreq;
@@ -192,7 +192,6 @@ httpreq_clear(httpreq* req) {
 	req->http_version[0] = 0;
 	req->errmsg[0] = 0;
 	req->route = 0;
-	req->postParams[0].k[0] = 0;
 	req->request_headers[0].k[0] = 0;
 }
 
@@ -206,6 +205,20 @@ fillGetParams(httpreq* req) {
 	req->getP = realloc(req->getP, new_len + 1);
 	// +1 so that the target is null-terminated .
 	strncpy(req->getP, after_qmark, new_len+1);
+	return 1;
+}
+
+int // ok
+fillPostParams(httpreq* req) {
+	printf("fillPostParams\n");
+	char* reqBodyStart = strstr(req->request_buf, "\r\n\r\n");
+	// Nothing to do.
+	if ((reqBodyStart == NULL) || (strlen(reqBodyStart) == 0)) { return 1; }
+	reqBodyStart += 4; // 2 CR and 2 NL.
+	size_t newLen = strlen(reqBodyStart);
+	req->postP = realloc(req->postP, newLen + 1);
+	// +1 to get the automatic null-termination.
+	strncpy(req->postP, reqBodyStart, newLen + 1);
 	return 1;
 }
 
@@ -303,6 +316,14 @@ parse_request(httpreq* request, int client_socket) {
 		return 0;
 	}
 
+	ok = fillPostParams(request);
+	if (!ok) {
+		write_error( client_socket, request, 422, "Couldn't parse POST params.");
+		return 0;
+	}
+
+	printf("request_body:%s\nDONE\n", request->request_buf);
+	printf("POST params:%s\n", request->postP);
 	// TODO post params
 
 	return 1;
@@ -650,7 +671,8 @@ main() {
 		httpreq *req = &requests[i];
 		req->response = sstr_new(128);
 		req->response2 = sstr_new(128);
-		req->getP = malloc(1024);
+		req->getP = malloc(256);
+		req->postP = malloc(256);
 	}
 
 	// Set up thread pool
