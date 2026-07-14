@@ -264,7 +264,7 @@ parse_route(u16* route, char* endpoint) {
 void
 write_to_client(httpreq* req, int httpStatus, char* body) {
 	char* a1;
-	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
+	asprintf(&a1, "HTTP/1.1 %d \r\nConnection: close\r\nContent-Length: %lu\r\n\r\n%s",
 		httpStatus,
 		strlen(body),
 		body
@@ -429,6 +429,8 @@ tr_of_every_account(PGconn* db) {
 	char* temp;
 	for (u16 i = 0; i < total_rows; i++) {
 		char* type = resolve_account_type_new_str(PQgetvalue(res, i, 2));
+		// TODO https://www.postgresql.org/docs/8.1/libpq-exec.html
+		// Apparently libpq can just print out HTML tables! Just use this. Amazing.
 		asprintf(&temp,
 			"<tr>"
 			  "<td>%s</td>"
@@ -585,7 +587,6 @@ createAccount(httpreq* request) {
 		sstr_set(request->response2, "Param 'name' or 'type' is missing");
 		return;
 	}
-	printf("name:%s\ntype:%s\n", name, type);
 	char* query = "insert into accounts (name, type) values ($1, $2);";
 	const char* values[2];
 	values[0] = name;
@@ -602,6 +603,41 @@ createAccount(httpreq* request) {
 	}
 	PQclear(res);
 	write_redirect(request, 303, "/2");
+	return;
+}
+
+void
+createLedgerEntry(httpreq* request) {
+	LOG_FUNC;
+	char* debitID = params_get_newstr(request->postP, "debit_account_id");
+	char* creditID = params_get_newstr(request->postP, "credit_account_id");
+	// TODO needs urlescaping . Results look like this
+	// Prepaid+4+months%27+worth+of+rent
+	char* note = params_get_newstr(request->postP, "note");
+	char* amount = params_get_newstr(request->postP, "amount");
+	if ((debitID == NULL) || (creditID == NULL) || (note == NULL) || (amount == NULL)) {
+		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
+		return;
+	}
+	char* query = "insert into transactions (debit_account_id, credit_account_id, note, amount)"
+		"values ($1, $2, $3, $4);";
+	const char* values[4];
+	values[0] = debitID;
+	values[1] = creditID;
+	values[2] = note;
+	values[3] = amount;
+	PGresult* res = PQexecParams(request->db, query, 4,
+		NULL, values, NULL, NULL, 0);
+	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+		char* a1;
+		asprintf(&a1, "DBERR: failed to create transaction: %s\n", PQresultErrorMessage(res));
+		printf("%s", a1);
+		write_to_client(request, 422, a1);
+		free(a1);
+		return;
+	}
+	PQclear(res);
+	write_redirect(request, 303, "/1");
 	return;
 }
 
@@ -628,6 +664,9 @@ handle_request(httpreq* request) {
 			break;
 		case 3:
 			createAccount(request);
+			break;
+		case 4:
+			createLedgerEntry(request);
 			break;
 		default:
 			write_to_client(request, 404, "Not found");
@@ -682,7 +721,10 @@ listen_on_port() {
 	address.sin_addr.s_addr = INADDR_ANY;
 	address.sin_port = htons(PORT);
 
-	bind(server_fd, (struct sockaddr*)&address, sizeof(address));
+	if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+		perror("CRITICAL ERROR. Bind failed. OS has probably locked the port in TIME_WAIT.");
+		exit(1);
+	}
 	listen(server_fd, 100);
 	printf("Server listening on port %d...\n", PORT);
 
