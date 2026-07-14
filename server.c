@@ -271,7 +271,17 @@ write_to_client(httpreq* req, int httpStatus, char* body) {
 	);
 	write_all(req->client_socket, a1, strlen(a1));
 	free(a1);
-	// TODO figure out how to do redirections
+}
+
+void
+write_redirect(httpreq* req, int httpStatus, char* newLocation) {
+	char* a1;
+	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: 0\r\nLocation: %s\r\nConnection: close\r\n\r\n",
+		httpStatus,
+		newLocation
+	);
+	write_all(req->client_socket, a1, strlen(a1));
+	free(a1);
 }
 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
@@ -591,8 +601,7 @@ createAccount(httpreq* request) {
 		return;
 	}
 	PQclear(res);
-	// TODO lear how to do redirects.
-	write_to_client(request, 200, "Account made. Restart server.");
+	write_redirect(request, 303, "/2");
 	return;
 }
 
