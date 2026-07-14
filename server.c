@@ -199,7 +199,6 @@ httpreq_clear(httpreq* req) {
 	req->errmsg[0] = 0;
 	req->route = 0;
 	req->request_headers[0].k[0] = 0;
-	req->client_socket = 0;
 }
 
 int // ok
@@ -261,42 +260,43 @@ parse_route(u16* route, char* endpoint) {
 	return 1;
 }
 
-// Write a string out as the HTTP response.
+// Write HTTP response to client.
 void
-write_error(httpreq* request, int http_status, char* errmsg) {
-	char *a1;
+write_to_client(httpreq* req, int httpStatus, char* body) {
+	char* a1;
 	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
-		http_status,
-		strlen(errmsg),
-		errmsg
+		httpStatus,
+		strlen(body),
+		body
 	);
-	sstr_set(request->response, a1);
-	write_all(request->client_socket, request->response->buf, request->response->len);
+	write_all(req->client_socket, a1, strlen(a1));
 	free(a1);
+	// TODO figure out how to do redirections
 }
 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
-parse_request(httpreq* request, int client_socket) {
+parse_request(httpreq* request) {
 	LOG_FUNC;
-	char* buf =  request->request_buf;
+	int client_socket = request->client_socket;
+	char* buf = request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
 
 	// TODO print out request size. Use this to pick a good default in the future.
 	if (bytes_read == 2047) {
-		write_error(request, 413, "Request too large. Max is 2KB.");
+		write_to_client(request, 413, "Request too large. Max is 2KB.");
 		return 0;
 	}
 
 	// Get first line. Max 512B.
 	char* line_end = strstr(buf, "\r\n");
 	if (line_end == NULL) {
-		write_error(request, 422, "Couldn't identify the first header. Fix your request.");
+		write_to_client(request, 422, "Couldn't identify the first header. Fix your request.");
 		return 0;
 	}
 	size_t line_len = line_end - buf;
 	if (line_len > 512) {
-		write_error(request, 413, "Request endpoint too large. We aren't parsing over 512B.");
+		write_to_client(request, 413, "Request endpoint too large. We aren't parsing over 512B.");
 		return 0;
 	}
 
@@ -308,25 +308,25 @@ parse_request(httpreq* request, int client_socket) {
 	char* http_version = request->http_version;
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
-		write_error(request, 422, "Failed to parse HTTP line 1. Fix your request.");
+		write_to_client(request, 422, "Failed to parse HTTP line 1. Fix your request.");
 		return 0;
 	}
 
 	int ok = parse_route(&request->route, endpoint);
 	if (!ok) {
-		write_error(request, 404, "Couldn't parse route from endpoint.");
+		write_to_client(request, 404, "Couldn't parse route from endpoint.");
 		return 0;
 	}
 
 	ok = fillGetParams(request);
 	if (!ok) {
-		write_error(request, 422, "Couldn't parse GET params.");
+		write_to_client(request, 422, "Couldn't parse GET params.");
 		return 0;
 	}
 
 	ok = fillPostParams(request);
 	if (!ok) {
-		write_error(request, 422, "Couldn't parse POST params.");
+		write_to_client(request, 422, "Couldn't parse POST params.");
 		return 0;
 	}
 
@@ -380,9 +380,9 @@ read_file_new_string(char* path) {
 }
 
 void
-handle_home(httpreq* request) {
+homePage(httpreq* request) {
 	char* body = read_file_new_string("templates/home.html");
-	sstr_set(request->response2, body);
+	write_to_client(request, 200, body);
 	free(body);
 }
 
@@ -444,8 +444,9 @@ listAccounts(httpreq* request) {
 	char* a1;
 	sstr* trs = tr_of_every_account(request->db);
 	asprintf(&a1, body, trs->buf);
-	sstr_set(request->response2, a1);
+	write_to_client(request, 200, a1);
 	sstr_free(trs);
+	// TODO should make a separate queue of these, and have a worker thread only for freeing temp memory.
 	free(a1);
 	free(body);
 }
@@ -559,7 +560,7 @@ listLedger(httpreq* request) {
 	char* aso = account_selection_options(request->db);
 	printf("aso:%s\n", aso);
 	asprintf(&a1, body, ln30->buf, aso, aso);
-	sstr_set(request->response2, a1);
+	write_to_client(request, 200, a1);
 	sstr_free(ln30);
 	free(a1);
 	free(body);
@@ -590,16 +591,17 @@ createAccount(httpreq* request) {
 		return;
 	}
 	PQclear(res);
-	sstr_set(request->response2, "Account made. Restart server.");
+	// TODO lear how to do redirects.
+	write_to_client(request, 200, "Account made. Restart server.");
 	return;
 }
 
 // This function is called from a threadpool worker, to handle the request.
 void*
-handle_request(int client_socket, httpreq* request) {
+handle_request(httpreq* request) {
 	LOG_FUNC;
 	httpreq_clear(request);
-	int ok = parse_request(request, client_socket);
+	int ok = parse_request(request);
 	if (!ok) {
 		// parse_request will send response to client.
 		return NULL;
@@ -607,7 +609,7 @@ handle_request(int client_socket, httpreq* request) {
 
 	switch (request->route) {
 		case 0:
-			handle_home(request);
+			homePage(request);
 			break;
 		case 1:
 			listLedger(request);
@@ -619,17 +621,9 @@ handle_request(int client_socket, httpreq* request) {
 			createAccount(request);
 			break;
 		default:
-			write_error(request, 404, "Not found");
+			write_to_client(request, 404, "Not found");
 			return NULL;
 	}
-
-	char *a1;
-	asprintf(&a1, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n",
-		request->response2->len);
-	sstr_set(request->response, a1);
-	sstr_append(request->response, request->response2->buf);
-	write_all(client_socket, request->response->buf, request->response->len);
-	free(a1);
 	return NULL;
 }
 
@@ -657,7 +651,8 @@ threadpool_worker(void* arg) {
 		int client_socket = queue_pop(&client_socket_queue);
 		struct timespec start_time;
 		clock_gettime(CLOCK_MONOTONIC, &start_time);
-		handle_request(client_socket, request);
+		request->client_socket = client_socket;
+		handle_request(request);
 		struct timespec end_time;
 		clock_gettime(CLOCK_MONOTONIC, &end_time);
 		double elapsed_ms = (double)(end_time.tv_sec - start_time.tv_sec) * 1000.0 +
