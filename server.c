@@ -17,6 +17,12 @@
 #define THREAD_POOL_SIZE 4
 #define QUEUE_MAX_SIZE 16
 
+#define LOG_INFO(fmt, ...) \
+    printf("[INFO] [%s:%d -> %s()] " fmt "\n", __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+#define LOG_FUNC \
+    printf("%s\n", __func__)
+
+
 typedef uint16_t u16;
 
 // BEGIN string implementation
@@ -28,7 +34,7 @@ typedef struct {
 
 sstr*
 sstr_new(size_t cap) {
-	printf("sstr_new\n");
+	LOG_FUNC;
 	sstr* s = malloc(sizeof(sstr));
 	s->len = 0;
 	s->cap = cap;
@@ -39,7 +45,7 @@ sstr_new(size_t cap) {
 
 void
 sstr_free(sstr* s) {
-	printf("sstr_free\n");
+	LOG_FUNC;
 	free(s->buf);
 	free(s);
 }
@@ -61,7 +67,7 @@ sstr_append(sstr* s, char* data) {
 
 void
 sstr_reset(sstr* s) {
-	printf("sstr_reset\n");
+	LOG_FUNC;
 	s->len = 0;
 	s->buf[0] = 0;
 }
@@ -152,16 +158,15 @@ typedef struct {
 } Param;
 
 char*
-params_get2_newstr(char* haystack, char* needle) {
+params_get_newstr(char* haystack, char* needle) {
 	if (strlen(haystack) == 0) { return NULL; }
 	char* needle_with_US;
 	asprintf(&needle_with_US, "%s=", needle);
 	char* found = strstr(haystack, needle_with_US);
 	if (found == NULL) { return NULL; }
-	char* next = haystack + strlen(needle_with_US);
-	printf("next:%s\n", next);
-	char* record_end = strchr(next, '&');
-	char* out = strndup(next, record_end - next);
+	char* value = found + strlen(needle_with_US);
+	char* record_end = strchr(value, '&');
+	char* out = strndup(value, record_end - value);
 	return out;
 }
 // END PARAM section
@@ -197,7 +202,7 @@ httpreq_clear(httpreq* req) {
 
 int // ok
 fillGetParams(httpreq* req) {
-	printf("fillGetParams\n");
+	LOG_FUNC;
 	char* qmark = strchr(req->endpoint, '?');
 	if (qmark == NULL) { return 1; }
 	char* after_qmark = qmark+1;
@@ -210,6 +215,7 @@ fillGetParams(httpreq* req) {
 
 int // ok
 fillPostParams(httpreq* req) {
+	LOG_FUNC;
 	printf("fillPostParams\n");
 	char* reqBodyStart = strstr(req->request_buf, "\r\n\r\n");
 	// Nothing to do.
@@ -270,7 +276,7 @@ write_error(int client_socket, httpreq* request, int http_status, char* errmsg) 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
 parse_request(httpreq* request, int client_socket) {
-	printf("parse_request\n");
+	LOG_FUNC;
 	char* buf =  request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
 
@@ -322,16 +328,12 @@ parse_request(httpreq* request, int client_socket) {
 		return 0;
 	}
 
-	printf("request_body:%s\nDONE\n", request->request_buf);
-	printf("POST params:%s\n", request->postP);
-	// TODO post params
-
 	return 1;
 }
 
 unsigned long
 db_tx_count(PGconn* db) {
-	printf("db_tx_count\n");
+	LOG_FUNC;
 	PGresult* res = PQexec(db, "select count(1) from transactions;");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		printf("resstat:%d\n", PQresultStatus(res));
@@ -347,8 +349,8 @@ db_tx_count(PGconn* db) {
 
 void
 hello_name(httpreq* request) {
-	printf("hello_name\n");
-	char* name = params_get2_newstr(request->getP, "name");
+	LOG_FUNC;
+	char* name = params_get_newstr(request->getP, "name");
 	printf("name found:%s\n", name);
 	u16 tx_count = db_tx_count(request->db);
 	char* a1;
@@ -360,7 +362,7 @@ hello_name(httpreq* request) {
 
 char*
 read_file_new_string(char* path) {
-	printf("read_file_new_string\n");
+	LOG_FUNC;
 	FILE* file = fopen(path, "rb");
 	if (file == NULL) {
 		printf("file null\n");
@@ -402,7 +404,7 @@ resolve_account_type_new_str(char* account_type_enum_s) {
 
 sstr*
 tr_of_every_account(PGconn* db) {
-	printf("tr_of_every_account1\n");
+	LOG_FUNC;
 	PGresult* res = PQexec(db, "select id, name, type from accounts;");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		printf("resstat:%d\n", PQresultStatus(res));
@@ -435,7 +437,7 @@ tr_of_every_account(PGconn* db) {
 
 void
 listAccounts(httpreq* request) {
-	printf("listAccounts\n");
+	LOG_FUNC;
 	char* body = read_file_new_string("templates/listAccounts.html");
 	char* a1;
 	sstr* trs = tr_of_every_account(request->db);
@@ -457,7 +459,7 @@ listAccounts(httpreq* request) {
 //</tr>
 sstr*
 ledger_newest_30_newstr(PGconn* db) {
-	printf("ledger_newest_30_newstr\n");
+	LOG_FUNC;
 	PGresult* res = PQexec(db, "SELECT id, created_at, debit_account_id, credit_account_id, note, amount"
 		" FROM transactions"
 		" ORDER BY created_at DESC"
@@ -507,7 +509,7 @@ ledger_newest_30_newstr(PGconn* db) {
 sstr* account_selection_options_;
 char*
 account_selection_options(PGconn* db) {
-	printf("account_selection_options\n");
+	LOG_FUNC;
 	if (account_selection_options_ != NULL) {
 		return account_selection_options_->buf;
 	}
@@ -545,7 +547,7 @@ account_selection_options(PGconn* db) {
 
 void
 listLedger(httpreq* request) {
-	printf("listLedger\n");
+	LOG_FUNC;
 	char* body = read_file_new_string("templates/ledger.html");
 	char* a1;
 	// If we start writing these into response3, we wouldn't need to malloc.
@@ -563,20 +565,37 @@ listLedger(httpreq* request) {
 
 void
 createAccount(httpreq* request) {
+	LOG_FUNC;
+	char* name = params_get_newstr(request->postP, "name");
+	char* type = params_get_newstr(request->postP, "type");
+	if ((name == NULL) || (type == NULL)) {
+		sstr_set(request->response2, "Param 'name' or 'type' is missing");
+		return;
+	}
+	printf("name:%s\ntype:%s\n", name, type);
+	char* query = "insert into accounts (name, type) values ($1, $2);";
+	const char* values[2];
+	values[0] = name;
+	values[1] = type;
+	PGresult* res = PQexecParams(request->db, query, 2,
+		NULL, values, NULL, NULL, 0);
+	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+		char* a1;
+		asprintf(&a1, "DBERR: failed to create account: %s\n", PQresultErrorMessage(res));
+		printf("%s", a1);
+		sstr_set(request->response2, a1);
+		free(a1);
+		return;
+	}
+	PQclear(res);
+	sstr_set(request->response2, "Account made. Restart server.");
 	return;
-	printf("createAccount\n");
-	// Take post params
-	// Write to DB
-	// Redirect back
-	char* a1;
-	sstr_set(request->response2, a1);
-	free(a1);
 }
 
 // This function is called from a threadpool worker, to handle the request.
 void*
 handle_request(int client_socket, httpreq* request) {
-	printf("handle_request\n");
+	LOG_FUNC;
 	httpreq_clear(request);
 	int ok = parse_request(request, client_socket);
 	if (!ok) {
@@ -595,8 +614,7 @@ handle_request(int client_socket, httpreq* request) {
 			listAccounts(request);
 			break;
 		case 3:
-			hello_name(request);
-		// 	createAccount(request);
+			createAccount(request);
 			break;
 		default:
 			write_error(client_socket, request, 404, "Not found");
@@ -615,7 +633,7 @@ handle_request(int client_socket, httpreq* request) {
 
 void*
 threadpool_worker(void* arg) {
-	printf("threadpool_worker\n");
+	LOG_FUNC;
 	int thread_idx = *((int*)arg);
 	free(arg);
 	// Each thread gets it's own connection because these conns are not thread-safe.
