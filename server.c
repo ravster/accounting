@@ -184,6 +184,7 @@ typedef struct {
 	char* postP;
 	Param request_headers[20];
 	PGconn* db;
+	int client_socket;
 } httpreq;
 
 void
@@ -198,6 +199,7 @@ httpreq_clear(httpreq* req) {
 	req->errmsg[0] = 0;
 	req->route = 0;
 	req->request_headers[0].k[0] = 0;
+	req->client_socket = 0;
 }
 
 int // ok
@@ -261,7 +263,7 @@ parse_route(u16* route, char* endpoint) {
 
 // Write a string out as the HTTP response.
 void
-write_error(int client_socket, httpreq* request, int http_status, char* errmsg) {
+write_error(httpreq* request, int http_status, char* errmsg) {
 	char *a1;
 	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
 		http_status,
@@ -269,7 +271,7 @@ write_error(int client_socket, httpreq* request, int http_status, char* errmsg) 
 		errmsg
 	);
 	sstr_set(request->response, a1);
-	write_all(client_socket, request->response->buf, request->response->len);
+	write_all(request->client_socket, request->response->buf, request->response->len);
 	free(a1);
 }
 
@@ -282,19 +284,19 @@ parse_request(httpreq* request, int client_socket) {
 
 	// TODO print out request size. Use this to pick a good default in the future.
 	if (bytes_read == 2047) {
-		write_error( client_socket, request, 413, "Request too large. Max is 2KB.");
+		write_error(request, 413, "Request too large. Max is 2KB.");
 		return 0;
 	}
 
 	// Get first line. Max 512B.
 	char* line_end = strstr(buf, "\r\n");
 	if (line_end == NULL) {
-		write_error( client_socket, request, 422, "Couldn't identify the first header. Fix your request.");
+		write_error(request, 422, "Couldn't identify the first header. Fix your request.");
 		return 0;
 	}
 	size_t line_len = line_end - buf;
 	if (line_len > 512) {
-		write_error( client_socket, request, 413, "Request endpoint too large. We aren't parsing over 512B.");
+		write_error(request, 413, "Request endpoint too large. We aren't parsing over 512B.");
 		return 0;
 	}
 
@@ -306,25 +308,25 @@ parse_request(httpreq* request, int client_socket) {
 	char* http_version = request->http_version;
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
-		write_error( client_socket, request, 422, "Failed to parse HTTP line 1. Fix your request.");
+		write_error(request, 422, "Failed to parse HTTP line 1. Fix your request.");
 		return 0;
 	}
 
 	int ok = parse_route(&request->route, endpoint);
 	if (!ok) {
-		write_error( client_socket, request, 404, "Couldn't parse route from endpoint.");
+		write_error(request, 404, "Couldn't parse route from endpoint.");
 		return 0;
 	}
 
 	ok = fillGetParams(request);
 	if (!ok) {
-		write_error( client_socket, request, 422, "Couldn't parse GET params.");
+		write_error(request, 422, "Couldn't parse GET params.");
 		return 0;
 	}
 
 	ok = fillPostParams(request);
 	if (!ok) {
-		write_error( client_socket, request, 422, "Couldn't parse POST params.");
+		write_error(request, 422, "Couldn't parse POST params.");
 		return 0;
 	}
 
@@ -617,7 +619,7 @@ handle_request(int client_socket, httpreq* request) {
 			createAccount(request);
 			break;
 		default:
-			write_error(client_socket, request, 404, "Not found");
+			write_error(request, 404, "Not found");
 			return NULL;
 	}
 
@@ -729,8 +731,6 @@ main() {
 			free(new_socket);
 			continue;
 		}
-
-
 		// Push client_socket file-descriptor directly onto queue that is consumed by the thread-pool.
 		queue_push(&client_socket_queue, client_socket);
 	}
