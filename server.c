@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <arpa/inet.h>
@@ -451,6 +452,7 @@ tr_of_every_account(PGconn* db) {
 
 void
 listAccounts(httpreq* request) {
+	// TODO print the name of the account, not the ID.
 	LOG_FUNC;
 	char* body = read_file_new_string("templates/listAccounts.html");
 	char* a1;
@@ -508,7 +510,6 @@ ledger_newest_30_newstr(PGconn* db) {
 		if (written_to_temp >= 1024) {
 			printf("ERR: ledger_newest_30_newstr: tr truncated to 1024: %s\n", temp);
 		}
-		printf("wrote temp:%s\n", temp);
 		sstr_append(out, temp);
 	}
 	printf("metric: ledger_newest_30_newstr: out_len:%ld\n", out->len);
@@ -568,14 +569,63 @@ listLedger(httpreq* request) {
 	// If we start writing these into response3, we wouldn't need to malloc.
 	// Then use strstr to build up response2.
 	sstr* ln30 = ledger_newest_30_newstr(request->db);
-	printf("ln30:%s\n", ln30->buf);
 	char* aso = account_selection_options(request->db);
-	printf("aso:%s\n", aso);
 	asprintf(&a1, body, ln30->buf, aso, aso);
 	write_to_client(request, 200, a1);
 	sstr_free(ln30);
 	free(a1);
 	free(body);
+}
+
+// Helper to convert a single hex character to its integer value
+static char hex_to_val(char ch) {
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return 0;
+}
+
+// In-place URL decoder. Modifies 'str' directly. Zero heap allocations.
+// Straight up Gemini copy-pasta
+void url_decode(char* str) {
+    if (str == NULL) return;
+    char* reader = str;
+    char* writer = str;
+    while (*reader != '\0') {
+        if (*reader == '+') {
+            // 1. Convert plus signs back to standard spaces
+            *writer = ' ';
+            reader++;
+            writer++;
+        } else if (*reader == '%' && isxdigit((unsigned char)reader[1]) && isxdigit((unsigned char)reader[2])) {
+            // 2. Convert %XX hex sequences back to characters
+            char high = hex_to_val(reader[1]);
+            char low  = hex_to_val(reader[2]);
+            // Combine the two hex nibbles into a single byte character
+            *writer = (char)((high << 4) | low);
+            reader += 3; // Skip past the %, X, and X characters
+            writer++;
+        } else {
+            // 3. Keep plain alphanumeric characters exactly as they are
+            *writer = *reader;
+            reader++;
+            writer++;
+        }
+    }
+    // Explicitly place a fresh null-terminator at our new shorter boundary
+    *writer = '\0';
+}
+
+void
+testPost(httpreq* req) {
+	LOG_FUNC;
+	char* a1;
+	char* bigText = params_get_newstr(req->postP, "note");
+	char* a2 = strdup(bigText);
+	url_decode(a2);
+	asprintf(&a1, "<p>got this:%s</p> <p>After url-decoding it is:%s</p>", bigText, a2);
+	write_to_client(req, 200, a1);
+	free(a1);
 }
 
 void
@@ -611,9 +661,8 @@ createLedgerEntry(httpreq* request) {
 	LOG_FUNC;
 	char* debitID = params_get_newstr(request->postP, "debit_account_id");
 	char* creditID = params_get_newstr(request->postP, "credit_account_id");
-	// TODO needs urlescaping . Results look like this
-	// Prepaid+4+months%27+worth+of+rent
 	char* note = params_get_newstr(request->postP, "note");
+	url_decode(note);
 	char* amount = params_get_newstr(request->postP, "amount");
 	if ((debitID == NULL) || (creditID == NULL) || (note == NULL) || (amount == NULL)) {
 		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
@@ -667,6 +716,9 @@ handle_request(httpreq* request) {
 			break;
 		case 4:
 			createLedgerEntry(request);
+			break;
+		case 5:
+			testPost(request);
 			break;
 		default:
 			write_to_client(request, 404, "Not found");
