@@ -430,8 +430,6 @@ tr_of_every_account(PGconn* db) {
 	char* temp;
 	for (u16 i = 0; i < total_rows; i++) {
 		char* type = resolve_account_type_new_str(PQgetvalue(res, i, 2));
-		// TODO https://www.postgresql.org/docs/8.1/libpq-exec.html
-		// Apparently libpq can just print out HTML tables! Just use this. Amazing.
 		asprintf(&temp,
 			"<tr>"
 			  "<td>%s</td>"
@@ -465,6 +463,41 @@ listAccounts(httpreq* request) {
 	free(body);
 }
 
+char* account_name_from_id_;
+// Called at start of program.
+u16 // ok
+account_name_from_id_prepopulate(PGconn* db) {
+	if (account_name_from_id_ != NULL) { return 1; }
+	LOG_FUNC;
+	PGresult* res = PQexec(db, "select id, name from accounts;");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		printf("resstat:%d\n", PQresultStatus(res));
+		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
+		PQclear(res);
+		return 0;
+	}
+	u16 total_rows = PQntuples(res);
+	char* a1 = malloc(1024); a1[0]=0;
+	size_t a1len = 0;
+	size_t a1cap = 1024;
+	char* eachPair = malloc(512);
+	for (u16 i=0; i < total_rows; i++) {
+		snprintf(eachPair, 512,
+				"%s=%s&",
+				PQgetvalue(res, i, 0),
+				PQgetvalue(res, i, 1)
+			);
+		size_t pairlen = strlen(eachPair);
+		if (pairlen + a1len >= a1cap) {
+			a1cap *= 2;
+			a1 = realloc(a1, a1cap);
+		}
+		strcat(a1, eachPair);
+	}
+	account_name_from_id_ = a1;
+	return 1;
+}
+
 // Should output the equivalent of 
 // <tr>
 //  <th>{{.ID}}</th>
@@ -491,6 +524,8 @@ ledger_newest_30_newstr(PGconn* db) {
 	sstr *out = sstr_new(4096);
 	char* temp = malloc(1024); temp[0]=0;
 	for (u16 i = 0; i < total_rows; i++) {
+		char* debit_acct_name = params_get_newstr(account_name_from_id_, PQgetvalue(res, i, 2));
+		char* credit_acct_name = params_get_newstr(account_name_from_id_, PQgetvalue(res, i, 3));
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<tr>"
 			  "<td>%s</td>"
@@ -502,8 +537,8 @@ ledger_newest_30_newstr(PGconn* db) {
 			"</tr>\n",
 			PQgetvalue(res, i, 0),
 			PQgetvalue(res, i, 1),
-			PQgetvalue(res, i, 2),
-			PQgetvalue(res, i, 3),
+			debit_acct_name,
+			credit_acct_name,
 			PQgetvalue(res, i, 4),
 			PQgetvalue(res, i, 5)
 		);
@@ -511,6 +546,8 @@ ledger_newest_30_newstr(PGconn* db) {
 			printf("ERR: ledger_newest_30_newstr: tr truncated to 1024: %s\n", temp);
 		}
 		sstr_append(out, temp);
+		free(debit_acct_name);
+		free(credit_acct_name);
 	}
 	printf("metric: ledger_newest_30_newstr: out_len:%ld\n", out->len);
 	free(temp);
@@ -741,6 +778,8 @@ threadpool_worker(void* arg) {
 		return NULL;
 	}
 	printf("DB conn made by thread:%d.\n", thread_idx);
+	account_name_from_id_prepopulate(db); // This is called with every thread. I don't like it but
+						      // it'll work for now. TODO
 
 	httpreq* request;
 	request = &requests[thread_idx];
