@@ -227,6 +227,7 @@ fillPostParams(httpreq* req) {
 	req->postP = realloc(req->postP, newLen + 1);
 	// +1 to get the automatic null-termination.
 	strncpy(req->postP, reqBodyStart, newLen + 1);
+	printf("Post params overwritten. Now:%s\n", req->postP);
 	return 1;
 }
 
@@ -488,13 +489,16 @@ account_name_from_id_prepopulate(PGconn* db) {
 				PQgetvalue(res, i, 1)
 			);
 		size_t pairlen = strlen(eachPair);
-		if (pairlen + a1len >= a1cap) {
+		size_t newlen = pairlen + a1len;
+		if (newlen+1 > a1cap) {
 			a1cap *= 2;
 			a1 = realloc(a1, a1cap);
 		}
-		strcat(a1, eachPair);
+		memcpy(a1 + a1len, eachPair, pairlen);
+		a1[newlen]=0;
 	}
 	account_name_from_id_ = a1;
+	free(eachPair);
 	return 1;
 }
 
