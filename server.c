@@ -218,7 +218,6 @@ fillGetParams(httpreq* req) {
 int // ok
 fillPostParams(httpreq* req) {
 	LOG_FUNC;
-	printf("fillPostParams\n");
 	char* reqBodyStart = strstr(req->request_buf, "\r\n\r\n");
 	// Nothing to do.
 	if ((reqBodyStart == NULL) || (strlen(reqBodyStart) == 0)) { return 1; }
@@ -468,7 +467,6 @@ char* account_name_from_id_;
 // Called at start of program.
 u16 // ok
 account_name_from_id_prepopulate(PGconn* db) {
-	if (account_name_from_id_ != NULL) { return 1; }
 	LOG_FUNC;
 	PGresult* res = PQexec(db, "select id, name from accounts;");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -495,6 +493,7 @@ account_name_from_id_prepopulate(PGconn* db) {
 			a1 = realloc(a1, a1cap);
 		}
 		memcpy(a1 + a1len, eachPair, pairlen);
+		a1len = newlen;
 		a1[newlen]=0;
 	}
 	account_name_from_id_ = a1;
@@ -782,9 +781,9 @@ threadpool_worker(void* arg) {
 		return NULL;
 	}
 	printf("DB conn made by thread:%d.\n", thread_idx);
-	account_name_from_id_prepopulate(db); // This is called with every thread. I don't like it but
-						      // it'll work for now. TODO
-
+	if (thread_idx == 0) {
+		account_name_from_id_prepopulate(db);
+	}
 	httpreq* request;
 	request = &requests[thread_idx];
 	request->db = db;
@@ -811,6 +810,10 @@ listen_on_port() {
 	int server_fd;
 	struct sockaddr_in address;
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	// To prevent macos from holding onto the port after the process completes. This safety net prevents
+	// me from quickly starting a new server within seconds.
+	int opt = 1;
+	setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
 	address.sin_family = AF_INET;
 	address.sin_addr.s_addr = INADDR_ANY;
