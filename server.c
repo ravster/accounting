@@ -12,7 +12,12 @@
 
 // gcc -o run -Wall -Wextra -lpthread -lpq -ljemalloc server.c && ./run
 // Test with
-// curl -v 'http://localhost:3002/1?name=Michael_Smith'
+// curl -v 'http://localhost:3002/0'
+// curl -v 'http://localhost:3002/1'
+// curl -v 'http://localhost:3002/2'
+
+// Far future:
+// Should make a separate queue of these, and have a worker thread only for freeing temp memory.
 
 #define PORT 3002
 #define THREAD_POOL_SIZE 4
@@ -79,19 +84,6 @@ sstr_set(sstr* s, char* data) {
 	sstr_append(s, data);
 }
 
-void
-sstr_prepend(sstr* s, char* data) {
-	size_t data_len = strlen(data);
-	size_t new_total_len = s->len + data_len;
-	if (s->cap < 1+ new_total_len) {
-		size_t new_cap = new_total_len * 2;
-		s->buf = realloc(s->buf, new_cap);
-		s->cap = new_cap;
-	}
-	memmove(s->buf + data_len, s->buf, s->len + 1); // With the orig null-term
-	memcpy(s->buf, data, data_len);
-	s->len += data_len;
-}
 // END string implementation
 
 // This queue is implemented as a ring-buffer.
@@ -168,6 +160,7 @@ params_get_newstr(char* haystack, char* needle) {
 	char* value = found + strlen(needle_with_US);
 	char* record_end = strchr(value, '&');
 	char* out = strndup(value, record_end - value);
+	free(needle_with_US);
 	return out;
 }
 // END PARAM section
@@ -450,7 +443,6 @@ tr_of_every_account(PGconn* db) {
 
 void
 listAccounts(httpreq* request) {
-	// TODO print the name of the account, not the ID.
 	LOG_FUNC;
 	char* body = read_file_new_string("templates/listAccounts.html");
 	char* a1;
@@ -458,7 +450,6 @@ listAccounts(httpreq* request) {
 	asprintf(&a1, body, trs->buf);
 	write_to_client(request, 200, a1);
 	sstr_free(trs);
-	// TODO should make a separate queue of these, and have a worker thread only for freeing temp memory.
 	free(a1);
 	free(body);
 }
@@ -501,15 +492,6 @@ account_name_from_id_prepopulate(PGconn* db) {
 	return 1;
 }
 
-// Should output the equivalent of 
-// <tr>
-//  <th>{{.ID}}</th>
-//  <td>{{.CreatedAt.Format "2006-01-02 15:04:05 MST"}}</td>
-//  <td>{{ index $.accounts .DebitAccountId }}</td>
-//  <td>{{ index $.accounts .CreditAccountId }}</td>
-//  <td>{{.Note}}</td>
-//  <td>${{.Amount}}</td>
-//</tr>
 sstr*
 ledger_newest_30_newstr(PGconn* db) {
 	LOG_FUNC;
@@ -730,6 +712,67 @@ createLedgerEntry(httpreq* request) {
 	return;
 }
 
+void
+incomeStatement(httpreq* request) {
+	LOG_FUNC;
+	auto template = read_file_new_string("templates/incomeStatement.html");
+	u16 month, year;
+	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
+	if (getPresult != 2) {
+		write_to_client(request, 422, "Can't parse GET params. MUST be in this form \"m=%hd&y=%hd\".");
+		return;
+	}
+	char* body;
+
+	// TODO parameterize
+	auto query_expenses = "select a.name, a.type, sum(t.amount) from transactions t join accounts a on t.debit_account_id = a.id AND a.type = 1 where t.created_at between '20260701' and '20260801' group by a.name, a.type;";
+	PGresult* res = PQexec(request->db, query_expenses);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		printf("resstat:%d\n", PQresultStatus(res));
+		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
+		PQclear(res);
+		return;
+	}
+	u16 total_rows = PQntuples(res);
+	u16 trsCap = 1024; u16 trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
+	char tr[512];
+	for (u16 i = 0; i < total_rows; i++) {
+		u16 trLen = snprintf(tr, 512,
+			"<tr>"
+			  "<td>%s</td>"
+			  "<td></td>"
+			  "<td>%s</td>"
+			"</tr>\n",
+			PQgetvalue(res, i, 0),
+			PQgetvalue(res, i, 2)
+		);
+		if (trLen >=512) {
+			printf("WARN: Truncated trLen when doing incomeStatement. res0:%s res2:%s\n",
+				PQgetvalue(res, i, 0),
+				PQgetvalue(res, i, 2)
+			);
+		}
+
+		auto newtrsLen = trsLen + trLen;
+		if (newtrsLen +1 > trsCap) {
+			auto newtrsCap = newtrsLen *2;
+			trs = realloc(trs, newtrsCap);
+			trsCap = newtrsCap;
+		}
+		strcat(&trs[trsLen-1], tr);
+		trsLen += trLen;
+	}
+	PQclear(res);
+
+	// TODO need a net profit-FLOAT
+	asprintf(&body, template, trs);
+	write_to_client(request, 200, body);
+	// TODO proper frees
+	free(trs);
+	free(body);
+	free(template);
+}
+
 // This function is called from a threadpool worker, to handle the request.
 void*
 handle_request(httpreq* request) {
@@ -758,6 +801,9 @@ handle_request(httpreq* request) {
 			createLedgerEntry(request);
 			break;
 		case 5:
+			incomeStatement(request);
+			break;
+		case 6:
 			testPost(request);
 			break;
 		default:
