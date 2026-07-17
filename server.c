@@ -720,17 +720,29 @@ incomeStatement(httpreq* request) {
 	u16 month, year;
 	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
 	if (getPresult != 2) {
-		write_to_client(request, 422, "Can't parse GET params. MUST be in this form \"m=%hd&y=%hd\".");
-		return;
+		// Use current month and year TODO
+		month = 7;
+		year = 2026;
 	}
+	char* startDate;
+	asprintf(&startDate, "%04d%02d01", year, month);
+	auto endMonth = month + 1;
+	if (endMonth == 13) {
+		endMonth = 1;
+		year += 1;
+	}
+	char* stopDate;
+	asprintf(&stopDate, "%04d%02d01", year, endMonth);
 	char* body;
 
 	// TODO income when I have some.
-	// TODO parameterize
 	// TODO This captures only increases to the expense accounts. It doesn't capture when an acct
 	// has a decrease. E.g. when the ISP provides a refund to compensate for an outage.
-	auto query_expenses = "select a.name, a.type, sum(t.amount) from transactions t join accounts a on t.debit_account_id = a.id AND a.type = 1 where t.created_at between '20260701' and '20260801' group by a.name, a.type;";
-	PGresult* res = PQexec(request->db, query_expenses);
+	auto query_expenses = "select a.name, a.type, sum(t.amount) from transactions t join accounts a on t.debit_account_id = a.id AND a.type = 1 where t.created_at between $1 and $2 group by a.name, a.type;";
+	const char* values[2];
+	values[0] = startDate;
+	values[1] = stopDate;
+	PGresult* res = PQexecParams(request->db, query_expenses, 2, NULL, values, NULL, NULL, 0);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
 		printf("resstat:%d\n", PQresultStatus(res));
 		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
@@ -780,6 +792,8 @@ incomeStatement(httpreq* request) {
 	free(trs);
 	free(body);
 	free(template);
+	free(stopDate);
+	free(startDate);
 }
 
 // This function is called from a threadpool worker, to handle the request.
