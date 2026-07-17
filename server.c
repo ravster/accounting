@@ -286,8 +286,8 @@ parse_request(httpreq* request) {
 	int client_socket = request->client_socket;
 	char* buf = request->request_buf;
 	int bytes_read = read(client_socket, buf, 2047);
+	printf("metric: request_size: %d\n", bytes_read);
 
-	// TODO print out request size. Use this to pick a good default in the future.
 	if (bytes_read == 2047) {
 		write_to_client(request, 413, "Request too large. Max is 2KB.");
 		return 0;
@@ -720,9 +720,11 @@ incomeStatement(httpreq* request) {
 	u16 month, year;
 	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
 	if (getPresult != 2) {
-		// Use current month and year TODO
-		month = 7;
-		year = 2026;
+		// Use current month & year
+		time_t t1 = time(NULL);
+		struct tm* t2 = localtime(&t1);
+		year = t2->tm_year + 1900;
+		month = t2->tm_mon+ 1;
 	}
 	char* startDate;
 	asprintf(&startDate, "%04d%02d01", year, month);
