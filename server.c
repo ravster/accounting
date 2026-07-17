@@ -1,4 +1,5 @@
 #include <time.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -724,7 +725,10 @@ incomeStatement(httpreq* request) {
 	}
 	char* body;
 
+	// TODO income when I have some.
 	// TODO parameterize
+	// TODO This captures only increases to the expense accounts. It doesn't capture when an acct
+	// has a decrease. E.g. when the ISP provides a refund to compensate for an outage.
 	auto query_expenses = "select a.name, a.type, sum(t.amount) from transactions t join accounts a on t.debit_account_id = a.id AND a.type = 1 where t.created_at between '20260701' and '20260801' group by a.name, a.type;";
 	PGresult* res = PQexec(request->db, query_expenses);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -736,7 +740,12 @@ incomeStatement(httpreq* request) {
 	u16 total_rows = PQntuples(res);
 	u16 trsCap = 1024; u16 trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
 	char tr[512];
+	int netProfitCents = 0;
 	for (u16 i = 0; i < total_rows; i++) {
+		char* amount = PQgetvalue(res, i, 2);
+		double amount_d = atof(amount);
+		unsigned int amount_i_cents = round(100 * amount_d);
+		netProfitCents -= amount_i_cents;
 		u16 trLen = snprintf(tr, 512,
 			"<tr>"
 			  "<td>%s</td>"
@@ -759,15 +768,15 @@ incomeStatement(httpreq* request) {
 			trs = realloc(trs, newtrsCap);
 			trsCap = newtrsCap;
 		}
-		strcat(&trs[trsLen-1], tr);
+		memcpy(trs + trsLen, tr, trLen + 1); // The +1 includes NUL.
 		trsLen += trLen;
 	}
 	PQclear(res);
 
 	// TODO need a net profit-FLOAT
-	asprintf(&body, template, trs);
+	auto netProfitDollars = netProfitCents / 100.00;
+	asprintf(&body, template, trs, netProfitDollars);
 	write_to_client(request, 200, body);
-	// TODO proper frees
 	free(trs);
 	free(body);
 	free(template);
