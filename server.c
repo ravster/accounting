@@ -146,11 +146,6 @@ queue_pop(queue_ringbuffer_t* queue) {
 }
 // END INT QUEUE implementation
 
-typedef struct {
-	char k[32];
-	char v[32];
-} Param;
-
 char*
 params_get_newstr(char* haystack, char* needle) {
 	if (strlen(haystack) == 0) { return NULL; }
@@ -164,7 +159,6 @@ params_get_newstr(char* haystack, char* needle) {
 	free(needle_with_US);
 	return out;
 }
-// END PARAM section
 
 // Basically a golang-style http.Request struct that will be cleared and reused by each thread.
 #define HTTPREQ_RESPONSE_MAX_SIZE 2048
@@ -177,7 +171,6 @@ typedef struct {
 	u16 route;
 	char* getP;
 	char* postP;
-	Param request_headers[20];
 	PGconn* db;
 	int client_socket;
 } httpreq;
@@ -193,7 +186,6 @@ httpreq_clear(httpreq* req) {
 	req->http_version[0] = 0;
 	req->errmsg[0] = 0;
 	req->route = 0;
-	req->request_headers[0].k[0] = 0;
 }
 
 int // ok
@@ -1023,13 +1015,10 @@ main() {
 		// Build up client socket.
 		struct sockaddr_in client_addr;
 		socklen_t addr_len = sizeof(client_addr);
-		int* new_socket = malloc(sizeof(int));
 		// This blocks till a connection comes through. Easy.
-		// In happy path, new_socket is freed by the worker thread.
 		int client_socket = accept(server_fd, (struct sockaddr*)&client_addr, &addr_len);
 		if (client_socket < 0) {
 			perror("accept failed");
-			free(new_socket);
 			continue;
 		}
 		// Push client_socket file-descriptor directly onto queue that is consumed by the thread-pool.
