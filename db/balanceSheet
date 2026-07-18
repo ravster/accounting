@@ -1,0 +1,38 @@
+WITH transaction_sides AS (
+    -- 1. Grab all Debits (Increases Assets, Decreases Liabilities)
+    SELECT 
+        debit_account_id AS account_id,
+        amount AS debit_amount,
+        0 AS credit_amount
+    FROM transactions
+    WHERE created_at < $1
+
+    UNION ALL
+
+    -- 2. Grab all Credits (Decreases Assets, Increases Liabilities)
+    SELECT 
+        credit_account_id AS account_id,
+        0 AS debit_amount,
+        amount AS credit_amount
+    FROM transactions
+    WHERE created_at < $1
+)
+SELECT 
+    a.id AS account_id,
+    a.name AS account_name,
+    a.type AS account_type,
+    SUM(ts.debit_amount) AS total_debits,
+    SUM(ts.credit_amount) AS total_credits,
+    
+    -- Calculate correct accounting balance direction
+    CASE 
+        WHEN a.type = 2 THEN SUM(ts.debit_amount - ts.credit_amount)  -- Asset: Debit - Credit
+        WHEN a.type = 3 THEN SUM(ts.credit_amount - ts.debit_amount)  -- Liability: Credit - Debit
+        ELSE 0 
+    END AS final_balance
+
+FROM accounts a
+JOIN transaction_sides ts ON a.id = ts.account_id
+WHERE a.type IN (2, 3)
+GROUP BY a.id, a.name, a.type
+ORDER BY a.type, a.name;

@@ -368,7 +368,7 @@ hello_name(httpreq* request) {
 }
 
 char*
-read_file_new_string(char* path) {
+read_file_newstr(char* path) {
 	LOG_FUNC;
 	FILE* file = fopen(path, "rb");
 	if (file == NULL) {
@@ -387,7 +387,7 @@ read_file_new_string(char* path) {
 
 void
 homePage(httpreq* request) {
-	char* body = read_file_new_string("templates/home.html");
+	char* body = read_file_newstr("templates/home.html");
 	write_to_client(request, 200, body);
 	free(body);
 }
@@ -446,7 +446,7 @@ tr_of_every_account(PGconn* db) {
 void
 listAccounts(httpreq* request) {
 	LOG_FUNC;
-	char* body = read_file_new_string("templates/listAccounts.html");
+	char* body = read_file_newstr("templates/listAccounts.html");
 	char* a1;
 	sstr* trs = tr_of_every_account(request->db);
 	asprintf(&a1, body, trs->buf);
@@ -588,7 +588,7 @@ account_selection_options(PGconn* db) {
 void
 listLedger(httpreq* request) {
 	LOG_FUNC;
-	char* body = read_file_new_string("templates/ledger.html");
+	char* body = read_file_newstr("templates/ledger.html");
 	char* a1;
 	// If we start writing these into response3, we wouldn't need to malloc.
 	// Then use strstr to build up response2.
@@ -717,7 +717,7 @@ createLedgerEntry(httpreq* request) {
 void
 incomeStatement(httpreq* request) {
 	LOG_FUNC;
-	auto template = read_file_new_string("templates/incomeStatement.html");
+	auto template = read_file_newstr("templates/incomeStatement.html");
 	u16 month, year;
 	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
 	if (getPresult != 2) {
@@ -801,7 +801,7 @@ incomeStatement(httpreq* request) {
 void
 balanceSheet(httpreq* request) {
 	LOG_FUNC;
-	auto template = read_file_new_string("templates/balanceSheet.html");
+	auto template = read_file_newstr("templates/balanceSheet.html");
 	u16 month, year;
 	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
 	if (getPresult != 2) {
@@ -821,9 +821,8 @@ balanceSheet(httpreq* request) {
 	char* stopDate;
 	asprintf(&stopDate, "%04d%02d01", year, endMonth);
 	char* body;
-
 	// TODO rename to newstr
-	auto query_bs = read_file_new_string("db/balanceSheet");
+	auto query_bs = read_file_newstr("db/balanceSheet");
 	const char* values[1];
 	printf("stopdate is:%s\n", stopDate);
 	values[0] = stopDate;
@@ -837,26 +836,24 @@ balanceSheet(httpreq* request) {
 	u16 total_rows = PQntuples(res);
 	size_t trsCap = 1024; size_t trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
 	char tr[512];
+	auto trTemplate = sstr_new(1024);
 	for (u16 i = 0; i < total_rows; i++) {
 		auto type = atoi(PQgetvalue(res, i, 2));
-		// TODO don't malloc/free this in the loop.
-		char* trTemplate;
 		switch (type) {
 			case 2:
-				trTemplate = strdup("<tr><td>%s</td><td>%s</td><td></td></tr>\n");
+				sstr_set(trTemplate, "<tr><td>%s</td><td>%s</td><td></td></tr>\n");
 				break;
 			case 3:
-				trTemplate = strdup("<tr><td>%s</td><td></td><td>%s</td></tr>\n");
+				sstr_set(trTemplate, "<tr><td>%s</td><td></td><td>%s</td></tr>\n");
 				break;
 			default:
-				trTemplate = strdup("Something wrong with trTemplate");
+				sstr_set(trTemplate, "Something wrong with trTemplate");
 		}
 		auto trLen = snprintf(tr, 512,
-			trTemplate,
+			trTemplate->buf,
 			PQgetvalue(res, i, 1),
 			PQgetvalue(res, i, 5)
 		);
-		free(trTemplate);
 		if (trLen >=512) {
 			printf("WARN: Truncated trLen when doing balanceSheet. res0:%s res2:%s\n",
 				PQgetvalue(res, i, 0),
@@ -872,13 +869,14 @@ balanceSheet(httpreq* request) {
 		memcpy(trs + trsLen, tr, trLen + 1); // The +1 includes NUL.
 		trsLen += trLen;
 	}
-	PQclear(res);
-
 	asprintf(&body, template, trs);
 	write_to_client(request, 200, body);
+	PQclear(res);
+	sstr_free(trTemplate);
 	free(trs);
 	free(body);
 	free(template);
+	free(query_bs);
 	free(stopDate);
 	free(startDate);
 }
