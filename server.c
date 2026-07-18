@@ -373,6 +373,7 @@ read_file_new_string(char* path) {
 	FILE* file = fopen(path, "rb");
 	if (file == NULL) {
 		printf("file null\n");
+		exit(1);
 	}
 	fseek(file, 0, SEEK_END);
 	long file_size = ftell(file);
@@ -787,9 +788,93 @@ incomeStatement(httpreq* request) {
 	}
 	PQclear(res);
 
-	// TODO need a net profit-FLOAT
 	auto netProfitDollars = netProfitCents / 100.00;
 	asprintf(&body, template, trs, netProfitDollars);
+	write_to_client(request, 200, body);
+	free(trs);
+	free(body);
+	free(template);
+	free(stopDate);
+	free(startDate);
+}
+
+void
+balanceSheet(httpreq* request) {
+	LOG_FUNC;
+	auto template = read_file_new_string("templates/balanceSheet.html");
+	u16 month, year;
+	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
+	if (getPresult != 2) {
+		// Use current month & year
+		time_t t1 = time(NULL);
+		struct tm* t2 = localtime(&t1);
+		year = t2->tm_year + 1900;
+		month = t2->tm_mon+ 1;
+	}
+	char* startDate;
+	asprintf(&startDate, "%04d%02d01", year, month);
+	auto endMonth = month + 1;
+	if (endMonth == 13) {
+		endMonth = 1;
+		year += 1;
+	}
+	char* stopDate;
+	asprintf(&stopDate, "%04d%02d01", year, endMonth);
+	char* body;
+
+	// TODO rename to newstr
+	auto query_bs = read_file_new_string("db/balanceSheet");
+	const char* values[1];
+	printf("stopdate is:%s\n", stopDate);
+	values[0] = stopDate;
+	PGresult* res = PQexecParams(request->db, query_bs, 1, NULL, values, NULL, NULL, 0);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+		printf("resstat:%d\n", PQresultStatus(res));
+		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
+		PQclear(res);
+		return;
+	}
+	u16 total_rows = PQntuples(res);
+	size_t trsCap = 1024; size_t trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
+	char tr[512];
+	for (u16 i = 0; i < total_rows; i++) {
+		auto type = atoi(PQgetvalue(res, i, 2));
+		// TODO don't malloc/free this in the loop.
+		char* trTemplate;
+		switch (type) {
+			case 2:
+				trTemplate = strdup("<tr><td>%s</td><td>%s</td><td></td></tr>\n");
+				break;
+			case 3:
+				trTemplate = strdup("<tr><td>%s</td><td></td><td>%s</td></tr>\n");
+				break;
+			default:
+				trTemplate = strdup("Something wrong with trTemplate");
+		}
+		auto trLen = snprintf(tr, 512,
+			trTemplate,
+			PQgetvalue(res, i, 1),
+			PQgetvalue(res, i, 5)
+		);
+		free(trTemplate);
+		if (trLen >=512) {
+			printf("WARN: Truncated trLen when doing balanceSheet. res0:%s res2:%s\n",
+				PQgetvalue(res, i, 0),
+				PQgetvalue(res, i, 2)
+			);
+		}
+		auto newtrsLen = trsLen + trLen;
+		if (newtrsLen +1 > trsCap) {
+			auto newtrsCap = newtrsLen *2;
+			trs = realloc(trs, newtrsCap);
+			trsCap = newtrsCap;
+		}
+		memcpy(trs + trsLen, tr, trLen + 1); // The +1 includes NUL.
+		trsLen += trLen;
+	}
+	PQclear(res);
+
+	asprintf(&body, template, trs);
 	write_to_client(request, 200, body);
 	free(trs);
 	free(body);
@@ -829,6 +914,9 @@ handle_request(httpreq* request) {
 			incomeStatement(request);
 			break;
 		case 6:
+			balanceSheet(request);
+			break;
+		case 7:
 			testPost(request);
 			break;
 		default:
