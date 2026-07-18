@@ -33,6 +33,9 @@
 typedef uint16_t u16;
 
 // BEGIN string implementation
+// Basic string manipulation isn't that complicated, but sometimes it is nice to have things taken care of.
+// My intention is to use this struct for those few times. I'm happy with malloc/free and basic
+// arithmetic most of the time.
 typedef struct {
 	char* buf;
 	size_t len;
@@ -67,21 +70,14 @@ sstr_append(sstr* s, char* data) {
 		s->buf = realloc(s->buf, new_cap);
 		s->cap = new_cap;
 	}
-	memcpy(s->buf + s->len, data, data_len);
+	memcpy(s->buf + s->len, data, data_len +1); // +1 copies the trailing NUL
 	s->len = new_total_len;
-	s->buf[new_total_len] = 0;
-}
-
-void
-sstr_reset(sstr* s) {
-	LOG_FUNC;
-	s->len = 0;
-	s->buf[0] = 0;
 }
 
 void
 sstr_set(sstr* s, char* data) {
-	sstr_reset(s);
+	s->len = 0;
+	s->buf[0] = 0;
 	sstr_append(s, data);
 }
 
@@ -160,7 +156,12 @@ params_get_newstr(char* haystack, char* needle) {
 	return out;
 }
 
-// Basically a golang-style http.Request struct that will be cleared and reused by each thread.
+// TODO rename to something more appropriate.
+// This started out as a golang-style request struct, but has grown into essentially thread-local data.
+// The main func produces an array of these, and each thread owns one of them. The idea was to have a
+// giant zero-allocation datastructure so that each thread does less malloc/free. With the use of
+// jemalloc, I don't know if I really need this all that much. Of course, we don't really NEED this
+// at all at the scale this program runs.
 #define HTTPREQ_RESPONSE_MAX_SIZE 2048
 typedef struct {
 	sstr *response, *response2;
@@ -177,8 +178,6 @@ typedef struct {
 
 void
 httpreq_clear(httpreq* req) {
-	sstr_reset(req->response);
-	sstr_reset(req->response2);
 	req->request_buf[0] = 0;
 	req->request_scratch1[0] = 0;
 	req->http_method[0] = 0;
@@ -813,7 +812,6 @@ balanceSheet(httpreq* request) {
 	char* stopDate;
 	asprintf(&stopDate, "%04d%02d01", year, endMonth);
 	char* body;
-	// TODO rename to newstr
 	auto query_bs = read_file_newstr("db/balanceSheet");
 	const char* values[1];
 	printf("stopdate is:%s\n", stopDate);
