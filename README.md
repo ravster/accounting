@@ -6,19 +6,11 @@ I've been doing my personal accounting for years using spreadsheets (Google Shee
 
 Then I read an article explaining all things going on in the golang runtime (GC, scheduler, etc) and it grossed me out the way nodejs grosses me out. I use RubyOnRails professionally, and the amount of wastage in those codebases also grosses me out nowadays. So I switched to building this in C.
 
-I've been very pleasantly surprised by how easy it has been to build a basic webapp in C. TCP is provided right out the gate by standard libraries, as is a thread-pool. The only dependency I have is libpq to talk to the DB. String-handling in C isn't as bad as people make it out to be, at least at the scale of this program.
+I've been very pleasantly surprised by how easy it has been to build a basic webapp in C. TCP is provided right out the gate by standard libraries, and a thread-pool is just a queue with many consumers. The only dependency I have is libpq to talk to the DB. String-handling in C isn't as bad as people make it out to be, at least at the scale of this program.
 
 # Local
 
 ```
-docker build -t a1 .
-docker run --name accounting1 -e POSTGRES_PASSWORD=password -v ${PWD}:/app -d a1
-docker start accounting1
-docker exec -it accounting1 sh
-psql -U postgres
-
-gcc -Wall -Wextra server.c -o run -lpthread -lpq
-
 # Backup
 pg_dump -Fc -U postgres -d accounting > cafe_accounting.dump
 ```
@@ -38,7 +30,15 @@ clang -Wall -Wextra -g \
   PGDATABASE=accounting PGUSER=ravidesai PGPASSWORD=password ./server
 ```
 
-pg on mac caveats
+## Check RAM usage
+
+```
+ps -o pid,rss,vsz,comm | grep server
+for i in {1..20}; do curl 'http://localhost:3002/2'; done
+```
+
+## Run PG on mac
+
 ```
 ==> Caveats
 ==> postgresql@18

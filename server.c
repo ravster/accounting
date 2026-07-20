@@ -11,14 +11,9 @@
 #include <arpa/inet.h>
 #include <libpq-fe.h>
 
-// gcc -o run -Wall -Wextra -lpthread -lpq -ljemalloc server.c && ./run
-// Test with
-// curl -v 'http://localhost:3002/0'
-// curl -v 'http://localhost:3002/1'
-// curl -v 'http://localhost:3002/2'
-
 // Far future:
-// Should make a separate queue of these, and have a worker thread only for freeing temp memory.
+// Should make a separate queue of pointers that need to be freed, and have a worker thread only for freeing temp memory.
+// Make this a multi-user program. Useful for people that have multiple businesses or sth.
 
 #define PORT 3002
 #define THREAD_POOL_SIZE 4
