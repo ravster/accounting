@@ -122,12 +122,8 @@ queue_push(queue_ringbuffer_t* queue, int socket) {
 int
 queue_pop(queue_ringbuffer_t* queue) {
 	pthread_mutex_lock(&queue->mutex);
-	// Handle spurious wakeups because OSs do that.
-	while (queue->count < 1) {
-		pthread_cond_wait(
-				&queue->cond_var,
-				&queue->mutex
-				);
+	while (queue->count < 1) { // Handle spurious wakeups because OSs do that.
+		pthread_cond_wait(&queue->cond_var, &queue->mutex);
 	}
 	int out = queue->client_sockets[queue->head];
 	queue->head = (queue->head + 1) % QUEUE_MAX_SIZE; // % because ringbuffer.
@@ -169,10 +165,10 @@ typedef struct {
 	char* postP;
 	PGconn* db;
 	int client_socket;
-} httpreq;
+} httpContext;
 
 void
-httpreq_clear(httpreq* req) {
+httpContext_clear(httpContext* req) {
 	req->request_buf[0] = 0;
 	req->request_scratch1[0] = 0;
 	req->http_method[0] = 0;
@@ -183,7 +179,7 @@ httpreq_clear(httpreq* req) {
 }
 
 int // ok
-fillGetParams(httpreq* req) {
+fillGetParams(httpContext* req) {
 	LOG_FUNC;
 	char* qmark = strchr(req->endpoint, '?');
 	if (qmark == NULL) { return 1; }
@@ -196,7 +192,7 @@ fillGetParams(httpreq* req) {
 }
 
 int // ok
-fillPostParams(httpreq* req) {
+fillPostParams(httpContext* req) {
 	LOG_FUNC;
 	char* reqBodyStart = strstr(req->request_buf, "\r\n\r\n");
 	// Nothing to do.
@@ -210,8 +206,8 @@ fillPostParams(httpreq* req) {
 	return 1;
 }
 
-httpreq requests[4];
-// END httpreq object.
+httpContext requests[4];
+// END httpContext object.
 
 // Have to loop because "write" isn't guaranteed to do it all in one syscall. It tells us how much it did.
 int // ok
@@ -243,7 +239,7 @@ parse_route(u16* route, char* endpoint) {
 
 // Write HTTP response to client.
 void
-write_to_client(httpreq* req, int httpStatus, char* body) {
+write_to_client(httpContext* req, int httpStatus, char* body) {
 	char* a1;
 	asprintf(&a1, "HTTP/1.1 %d \r\nConnection: close\r\nContent-Length: %lu\r\n\r\n%s",
 		httpStatus,
@@ -255,7 +251,7 @@ write_to_client(httpreq* req, int httpStatus, char* body) {
 }
 
 void
-write_redirect(httpreq* req, int httpStatus, char* newLocation) {
+write_redirect(httpContext* req, int httpStatus, char* newLocation) {
 	char* a1;
 	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: 0\r\nLocation: %s\r\nConnection: close\r\n\r\n",
 		httpStatus,
@@ -267,7 +263,7 @@ write_redirect(httpreq* req, int httpStatus, char* newLocation) {
 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
-parse_request(httpreq* request) {
+parse_request(httpContext* request) {
 	LOG_FUNC;
 	int client_socket = request->client_socket;
 	char* buf = request->request_buf;
@@ -341,7 +337,7 @@ db_tx_count(PGconn* db) {
 }
 
 void
-hello_name(httpreq* request) {
+hello_name(httpContext* request) {
 	LOG_FUNC;
 	char* name = params_get_newstr(request->getP, "name");
 	printf("name found:%s\n", name);
@@ -372,7 +368,7 @@ read_file_newstr(char* path) {
 }
 
 void
-homePage(httpreq* request) {
+homePage(httpContext* request) {
 	char* body = read_file_newstr("templates/home.html");
 	write_to_client(request, 200, body);
 	free(body);
@@ -430,7 +426,7 @@ tr_of_every_account(PGconn* db) {
 }
 
 void
-listAccounts(httpreq* request) {
+listAccounts(httpContext* request) {
 	LOG_FUNC;
 	char* body = read_file_newstr("templates/listAccounts.html");
 	char* a1;
@@ -572,7 +568,7 @@ account_selection_options(PGconn* db) {
 }
 
 void
-listLedger(httpreq* request) {
+listLedger(httpContext* request) {
 	LOG_FUNC;
 	char* body = read_file_newstr("templates/ledger.html");
 	char* a1;
@@ -627,7 +623,7 @@ void url_decode(char* str) {
 }
 
 void
-testPost(httpreq* req) {
+testPost(httpContext* req) {
 	LOG_FUNC;
 	char* a1;
 	char* bigText = params_get_newstr(req->postP, "note");
@@ -639,7 +635,7 @@ testPost(httpreq* req) {
 }
 
 void
-createAccount(httpreq* request) {
+createAccount(httpContext* request) {
 	LOG_FUNC;
 	char* name = params_get_newstr(request->postP, "name");
 	char* type = params_get_newstr(request->postP, "type");
@@ -667,7 +663,7 @@ createAccount(httpreq* request) {
 }
 
 void
-createLedgerEntry(httpreq* request) {
+createLedgerEntry(httpContext* request) {
 	LOG_FUNC;
 	char* debitID = params_get_newstr(request->postP, "debit_account_id");
 	char* creditID = params_get_newstr(request->postP, "credit_account_id");
@@ -701,7 +697,7 @@ createLedgerEntry(httpreq* request) {
 }
 
 void
-incomeStatement(httpreq* request) {
+incomeStatement(httpContext* request) {
 	LOG_FUNC;
 	auto template = read_file_newstr("templates/incomeStatement.html");
 	u16 month, year;
@@ -785,7 +781,7 @@ incomeStatement(httpreq* request) {
 }
 
 void
-balanceSheet(httpreq* request) {
+balanceSheet(httpContext* request) {
 	LOG_FUNC;
 	auto template = read_file_newstr("templates/balanceSheet.html");
 	u16 month, year;
@@ -868,9 +864,9 @@ balanceSheet(httpreq* request) {
 
 // This function is called from a threadpool worker, to handle the request.
 void*
-handle_request(httpreq* request) {
+handle_request(httpContext* request) {
 	LOG_FUNC;
-	httpreq_clear(request);
+	httpContext_clear(request);
 	int ok = parse_request(request);
 	if (!ok) {
 		// parse_request will send response to client.
@@ -926,7 +922,7 @@ threadpool_worker(void* arg) {
 	if (thread_idx == 0) {
 		account_name_from_id_prepopulate(db);
 	}
-	httpreq* request;
+	httpContext* request;
 	request = &requests[thread_idx];
 	request->db = db;
 
@@ -974,7 +970,7 @@ listen_on_port() {
 int
 main() {
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-		httpreq *req = &requests[i];
+		httpContext *req = &requests[i];
 		req->response = sstr_new(128);
 		req->response2 = sstr_new(128);
 		req->getP = malloc(256);
