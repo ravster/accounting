@@ -1,6 +1,5 @@
 #include <stdatomic.h>
 #include <semaphore.h>
-#include <time.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -959,15 +958,8 @@ threadpool_worker(void* arg) {
 	while (1) {
 		sem_wait(client_socket_queue.sem); // Apparently semaphores just don't have spurious wakeups. Nice.
 		int client_socket = lfq_pop(&client_socket_queue);
-		struct timespec start_time;
-		clock_gettime(CLOCK_MONOTONIC, &start_time);
 		request->client_socket = client_socket;
 		handle_request(request);
-		struct timespec end_time;
-		clock_gettime(CLOCK_MONOTONIC, &end_time);
-		double elapsed_ms = (double)(end_time.tv_sec - start_time.tv_sec) * 1000.0 +
-			(double)(end_time.tv_nsec - start_time.tv_nsec) / 1000000.0;
-		printf("DONE request:%.3f ms\n", elapsed_ms);
 	}
 	PQfinish(db);
 	return NULL;
