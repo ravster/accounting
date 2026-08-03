@@ -182,8 +182,6 @@ params_get_newstr(char* haystack, char* needle) {
 // jemalloc, I don't know if I really need this all that much. Of course, we don't really NEED this
 // at all at the scale this program runs.
 typedef struct {
-	sstr *response;
-	// TODO just sstrs bro. We have jemalloc. Defer to jemalloc. This is all thread-local anyway.
 	char request_buf[2048], http_method[8], endpoint[256], http_version[16],
 	     errmsg[256];
 	u16 route;
@@ -543,13 +541,12 @@ ledger_newest_30_newstr(PGconn* db) {
 sstr* account_selection_options_;
 char*
 account_selection_options(PGconn* db) {
+	// Restart the program so it picks up new accounts.
 	LOG_FUNC;
 	if (account_selection_options_ != NULL) {
+		// Basic memoization. Easy.
 		return account_selection_options_->buf;
 	}
-	// Memoize this. It should pull the data from the db the first time and write to a str.
-	// After that it should always return the str. After a new account is created, the program
-	// should be restarted.
 
 	account_selection_options_ = sstr_new(1024);
 	sstr* out = account_selection_options_;
@@ -979,7 +976,6 @@ main() {
 	lfq_init(&client_socket_queue);
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
 		httpContext *req = &requests[i];
-		req->response = sstr_new(128);
 		req->getP = malloc(256);
 		req->postP = malloc(256);
 	}
