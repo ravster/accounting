@@ -176,18 +176,15 @@ params_get_newstr(char* haystack, char* needle) {
 	return out;
 }
 
-// TODO rename to something more appropriate.
 // This started out as a golang-style request struct, but has grown into essentially thread-local data.
 // The main func produces an array of these, and each thread owns one of them. The idea was to have a
 // giant zero-allocation datastructure so that each thread does less malloc/free. With the use of
 // jemalloc, I don't know if I really need this all that much. Of course, we don't really NEED this
 // at all at the scale this program runs.
-#define HTTPREQ_RESPONSE_MAX_SIZE 2048
 typedef struct {
-	sstr *response, *response2;
-	char request_buf[HTTPREQ_RESPONSE_MAX_SIZE],
-	     request_scratch1[HTTPREQ_RESPONSE_MAX_SIZE],
-	     http_method[8], endpoint[256], http_version[16],
+	sstr *response;
+	// TODO just sstrs bro. We have jemalloc. Defer to jemalloc. This is all thread-local anyway.
+	char request_buf[2048], http_method[8], endpoint[256], http_version[16],
 	     errmsg[256];
 	u16 route;
 	char* getP;
@@ -198,8 +195,6 @@ typedef struct {
 
 void
 httpContext_clear(httpContext* req) {
-	req->request_buf[0] = 0;
-	req->request_scratch1[0] = 0;
 	req->http_method[0] = 0;
 	req->endpoint[0] = 0;
 	req->http_version[0] = 0;
@@ -316,7 +311,7 @@ parse_request(httpContext* request) {
 		return 0;
 	}
 
-	char* first_line = request->request_scratch1;
+	char* first_line = calloc(1, 512);
 	strncpy(first_line, buf, line_len);
 	printf("first_line:%s\n", first_line);
 	char* http_method = request->http_method;
@@ -325,27 +320,32 @@ parse_request(httpContext* request) {
 	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
 	if (sscanf_result != 3) {
 		write_to_client(request, 422, "Failed to parse HTTP line 1. Fix your request.");
+		free(first_line);
 		return 0;
 	}
 
 	int ok = parse_route(&request->route, endpoint);
 	if (!ok) {
 		write_to_client(request, 404, "Couldn't parse route from endpoint.");
+		free(first_line);
 		return 0;
 	}
 
 	ok = fillGetParams(request);
 	if (!ok) {
 		write_to_client(request, 422, "Couldn't parse GET params.");
+		free(first_line);
 		return 0;
 	}
 
 	ok = fillPostParams(request);
 	if (!ok) {
 		write_to_client(request, 422, "Couldn't parse POST params.");
+		free(first_line);
 		return 0;
 	}
 
+	free(first_line);
 	return 1;
 }
 
@@ -363,19 +363,6 @@ db_tx_count(PGconn* db) {
 	unsigned long out = strtoul(count_str, NULL, 10);
 	PQclear(res);
 	return out;
-}
-
-void
-hello_name(httpContext* request) {
-	LOG_FUNC;
-	char* name = params_get_newstr(request->getP, "name");
-	printf("name found:%s\n", name);
-	u16 tx_count = db_tx_count(request->db);
-	char* a1;
-	asprintf(&a1, "<p>Hello, %s!</p> <p>There are %d transactions in the db.</p>", name, tx_count);
-	sstr_set(request->response2, a1);
-	free(a1);
-	free(name);
 }
 
 char*
@@ -597,8 +584,6 @@ listLedger(httpContext* request) {
 	LOG_FUNC;
 	char* body = read_file_newstr("templates/ledger.html");
 	char* a1;
-	// If we start writing these into response3, we wouldn't need to malloc.
-	// Then use strstr to build up response2.
 	sstr* ln30 = ledger_newest_30_newstr(request->db);
 	char* aso = account_selection_options(request->db);
 	asprintf(&a1, body, ln30->buf, aso, aso);
@@ -665,7 +650,7 @@ createAccount(httpContext* request) {
 	char* name = params_get_newstr(request->postP, "name");
 	char* type = params_get_newstr(request->postP, "type");
 	if ((name == NULL) || (type == NULL)) {
-		sstr_set(request->response2, "Param 'name' or 'type' is missing");
+		write_to_client(request, 422, "Param 'name' or 'type' is missing");
 		return;
 	}
 	char* name2 = strdup(name);
@@ -680,7 +665,7 @@ createAccount(httpContext* request) {
 		char* a1;
 		asprintf(&a1, "DBERR: failed to create account: %s\n", PQresultErrorMessage(res));
 		printf("%s", a1);
-		sstr_set(request->response2, a1);
+		write_to_client(request, 500, a1);
 		free(a1);
 		free(name2);
 		return;
@@ -995,7 +980,6 @@ main() {
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
 		httpContext *req = &requests[i];
 		req->response = sstr_new(128);
-		req->response2 = sstr_new(128);
 		req->getP = malloc(256);
 		req->postP = malloc(256);
 	}
