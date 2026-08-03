@@ -553,10 +553,6 @@ ledger_newest_30_newstr(PGconn* db) {
 	return out;
 }
 
-// Should output the equivalent of 
-// {{range $k, $v := .accounts }}
-// <option value="{{$k}}">{{$v}}</option>
-// {{end}}
 sstr* account_selection_options_;
 char*
 account_selection_options(PGconn* db) {
@@ -672,9 +668,11 @@ createAccount(httpContext* request) {
 		sstr_set(request->response2, "Param 'name' or 'type' is missing");
 		return;
 	}
+	char* name2 = strdup(name);
+	url_decode(name2);
 	char* query = "insert into accounts (name, type) values ($1, $2);";
 	const char* values[2];
-	values[0] = name;
+	values[0] = name2;
 	values[1] = type;
 	PGresult* res = PQexecParams(request->db, query, 2,
 		NULL, values, NULL, NULL, 0);
@@ -684,9 +682,11 @@ createAccount(httpContext* request) {
 		printf("%s", a1);
 		sstr_set(request->response2, a1);
 		free(a1);
+		free(name2);
 		return;
 	}
 	PQclear(res);
+	free(name2);
 	write_redirect(request, 303, "/2");
 	return;
 }
