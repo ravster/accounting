@@ -1,18 +1,18 @@
 # Accounting program
 
-## History
+## Context
 
 I've been doing my personal accounting for years using spreadsheets (Google Sheets). It's nice, but I want to play around with something different now. This started out as an Odin program, then a Golang program because I was having too many issues getting Odin running inside Docker on a mac.
 
 Then I read an article explaining all things going on in the golang runtime (GC, scheduler, etc) and it grossed me out the way nodejs grosses me out. I use RubyOnRails professionally, and the amount of wastage in those codebases also grosses me out nowadays. So I switched to building this in C.
 
-I've been very pleasantly surprised by how easy it has been to build a basic webapp in C. TCP is provided right out the gate by standard libraries, and a thread-pool is just a queue with many consumers. The only dependency I have is libpq to talk to the DB. String-handling in C isn't as bad as people make it out to be, at least at the scale of this program.
+I've been very pleasantly surprised by how easy it has been to build a basic webapp in C. It took ~1kloc; ridiculously easy. TCP is provided right out the gate by standard libraries, and a thread-pool is just a queue with many consumers. The only dependency I have is libpq to talk to the DB. String-handling in C isn't as bad as people make it out to be, at least at the scale of this program.
 
 # Local
 
 ```
 # Backup
-pg_dump -Fc -U postgres -d accounting > cafe_accounting.dump
+pg_dump -Fc -U ravidesai -d accounting > cafe_accounting.dump
 ```
 
 On mac, because I'm tired of docker taking minutes to recognize that the source-file has changed and update that inside the container. Urgh, so annoying. I didn't spend all this time programming in C just for something silly in Docker to slow me down.
@@ -53,3 +53,6 @@ To start postgresql@18 now and restart at login:
 Or, if you don't want/need a background service you can just run:
   LC_ALL="en_US.UTF-8" /opt/homebrew/opt/postgresql@18/bin/postgres -D /opt/homebrew/var/postgresql@18
 ```
+
+# History
+- 20260805: Remove Golang code from the project. Nothing in here needs a GC and a scheduler process constantly churning away.
