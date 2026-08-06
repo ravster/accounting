@@ -29,6 +29,8 @@
 typedef uint16_t u16;
 typedef uint32_t u32;
 
+// Globals so many functions can write to this.
+FILE *account_file, *tx_file;
 typedef struct {
 	u16 id;
 	float amount;
@@ -37,11 +39,52 @@ typedef struct {
 	u16 credit_account_id;
 	u32 created_at;
 } Tx;
+Tx *txs;
+u16 txLen, txCap;
+
+void
+tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_account_id, u32 created_at) {
+	if (txLen == txCap) {
+		txCap *= 2;
+		txs = realloc(txs, txCap);
+	}
+	auto new_tx = &txs[txLen];
+	new_tx->id = id;
+	new_tx->amount = amount;
+	new_tx->note = note;
+	new_tx->debit_account_id = debit_account_id;
+	new_tx->credit_account_id = credit_account_id;
+	new_tx->created_at = created_at;
+	txLen++;
+}
+
 typedef struct {
 	u16 id;
 	char* name;
 	u16 type;
 } Account;
+Account *accs;
+u16 accLen, accCap;
+
+void
+acc_append(u16 id, char* name, u16 type) {
+	if (accLen == accCap) {
+		accCap *= 2;
+		accs = realloc(accs, accCap);
+	}
+	auto new_acc = &accs[accLen];
+	new_acc->id = id;
+	new_acc->name = strdup(name);
+	new_acc->type = type;
+	accLen++;
+}
+
+void
+acc_print_names() {
+	for (int i = 0; i< accLen; i++) {
+		printf("%s, ", accs[i].name);
+	}
+}
 
 
 // BEGIN string implementation
@@ -866,14 +909,72 @@ listen_on_port() {
 	return server_fd;
 }
 
+// Should blow up program if fail.
+void
+load_filedata() {
+	LOG_FUNC;
+	char buf[256];
+
+	rewind(account_file);
+	accCap = 128; accLen = 0;
+	accs = calloc(accCap, sizeof(Account));
+	u16 id;
+	char* name = calloc(32, 1);
+	u16 type;
+	fgets(buf, 256, account_file); // Skip headers
+	printf("Reading account_file. Headers:%s", buf);
+	while(fgets(buf, 256, account_file) != NULL) {
+		int count = sscanf(buf, "%hu\t%31[^\t]\t%hu", &id, name, &type);
+		if (count != 3) {
+			printf("Epic fail parsing account_file.\nsscanf returned:%d\nbuf:%s\n", count, buf);
+			exit(1);
+		}
+		acc_append(id, name, type);
+	}
+	printf("Loaded %hu accounts\n", accLen);
+
+	rewind(tx_file);
+	txCap = 128; txLen = 0;
+	txs = calloc(txCap, sizeof(Tx));
+	float amount;
+	char* note = calloc(128, 1);
+	u16 debit_account_id;
+	u16 credit_account_id;
+	u32 created_at;
+	fgets(buf, 256, tx_file); // Skip headers.
+	printf("Reading tx_file. Headers:%s", buf);
+	while(fgets(buf, 256, tx_file) != NULL) {
+		int count = sscanf(buf, "%hu\t%f\t%127[^\t]\t%hu\t%hu\t%u", &id, &amount, note, &debit_account_id, &credit_account_id, &created_at);
+		if (count != 6) {
+			printf("Fail: Can't parse tx-file right.\nsscanf returned:%d\nbuf%s\n", count, buf);
+			exit(1);
+		}
+		tx_append(id, amount, note, debit_account_id, credit_account_id, created_at);
+	}
+	printf("Loaded %hu txs\n", txLen);
+}
+
 int
 main(int argc, char** argv) {
-	printf("Usage:\n\tserver directory/containing/files/\n\n");
+	if (argc != 2) {
+		printf("Are you sure about that?\nUsage:\n\tserver directory/containing/files/\n\n");
+		exit(1);
+	}
 
 	char* dirpath = argv[1];
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
-	auto accounts = fopen(account_path, "a+");
+	account_file = fopen(account_path, "a+");
+	if (!account_file) { printf("Can't load path:%s\n", account_path); return 1; }
+	char* tx_path;
+	asprintf(&tx_path, "%stransactions.tsv", dirpath);
+	tx_file = fopen(tx_path, "a+");
+	if (!tx_file) { printf("Can't load path:%s\n", tx_path); return 1; }
+	free(account_path);
+	free(tx_path);
+	load_filedata();
+	return 0;
+
 	// read path/accounts.tsv. use mode "a+" so for read and append.
 	// read path/transactions.tsv
 	// fill up the accounts and txs arrays
@@ -924,6 +1025,8 @@ main(int argc, char** argv) {
 		lfq_push(&client_socket_queue, client_socket);
 	}
 	lfq_destroy(&client_socket_queue);
+	fclose(account_file);
+	fclose(tx_file);
 	return 0;
 }
 

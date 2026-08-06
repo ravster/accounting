@@ -1,1 +1,1 @@
-PGDATABASE=accounting PGUSER=ravidesai PGPASSWORD=password lldb ./server
+lldb ./server -- $1
