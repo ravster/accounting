@@ -10,7 +10,6 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <arpa/inet.h>
-#include <libpq-fe.h>
 
 // Far future:
 // Should make a separate queue of pointers that need to be freed, and have a worker thread only for freeing temp memory.
@@ -27,8 +26,23 @@
 #define LOG_FUNC \
     printf("%s\n", __func__)
 
-
 typedef uint16_t u16;
+typedef uint32_t u32;
+
+typedef struct {
+	u16 id;
+	float amount;
+	char* note;
+	u16 debit_account_id;
+	u16 credit_account_id;
+	u32 created_at;
+} Tx;
+typedef struct {
+	u16 id;
+	char* name;
+	u16 type;
+} Account;
+
 
 // BEGIN string implementation
 // Basic string manipulation isn't that complicated, but sometimes it is nice to have things taken care of.
@@ -187,7 +201,6 @@ typedef struct {
 	u16 route;
 	char* getP;
 	char* postP;
-	PGconn* db;
 	int client_socket;
 } httpContext;
 
@@ -347,22 +360,6 @@ parse_request(httpContext* request) {
 	return 1;
 }
 
-unsigned long
-db_tx_count(PGconn* db) {
-	LOG_FUNC;
-	PGresult* res = PQexec(db, "select count(1) from transactions;");
-	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
-		PQclear(res);
-		return 0;
-	}
-	char* count_str = PQgetvalue(res, 0, 0);
-	unsigned long out = strtoul(count_str, NULL, 10);
-	PQclear(res);
-	return out;
-}
-
 char*
 read_file_newstr(char* path) {
 	LOG_FUNC;
@@ -407,35 +404,26 @@ resolve_account_type_new_str(char* account_type_enum_s) {
 }
 
 sstr*
-tr_of_every_account(PGconn* db) {
+tr_of_every_account() {
 	LOG_FUNC;
-	PGresult* res = PQexec(db, "select id, name, type from accounts;");
-	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
-		PQclear(res);
-		return 0;
-	}
-	u16 total_rows = PQntuples(res);
 	sstr *out = sstr_new(512);
 	char* temp;
+	auto total_rows = 3;
 	for (u16 i = 0; i < total_rows; i++) {
-		char* type = resolve_account_type_new_str(PQgetvalue(res, i, 2));
+		char* type = resolve_account_type_new_str("foo");
 		asprintf(&temp,
 			"<tr>"
 			  "<td>%s</td>"
 			  "<td>%s</td>"
 			  "<td>%s</td>"
 			"</tr>\n",
-			PQgetvalue(res, i, 0),
-			PQgetvalue(res, i, 1),
+			"foo", "foo",
 			type
 		);
 		sstr_append(out, temp);
 		free(type);
 		free(temp);
 	}
-	PQclear(res);
 	return out;
 }
 
@@ -444,7 +432,7 @@ listAccounts(httpContext* request) {
 	LOG_FUNC;
 	char* body = read_file_newstr("templates/listAccounts.html");
 	char* a1;
-	sstr* trs = tr_of_every_account(request->db);
+	sstr* trs = tr_of_every_account();
 	asprintf(&a1, body, trs->buf);
 	write_to_client(request, 200, a1);
 	sstr_free(trs);
@@ -455,25 +443,18 @@ listAccounts(httpContext* request) {
 char* account_name_from_id_;
 // Called at start of program.
 u16 // ok
-account_name_from_id_prepopulate(PGconn* db) {
+account_name_from_id_prepopulate() {
 	LOG_FUNC;
-	PGresult* res = PQexec(db, "select id, name from accounts;");
-	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
-		PQclear(res);
-		return 0;
-	}
-	u16 total_rows = PQntuples(res);
 	char* a1 = malloc(1024); a1[0]=0;
 	size_t a1len = 0;
 	size_t a1cap = 1024;
 	char* eachPair = malloc(512);
+	auto total_rows = 3;
 	for (u16 i=0; i < total_rows; i++) {
 		snprintf(eachPair, 512,
 				"%s=%s&",
-				PQgetvalue(res, i, 0),
-				PQgetvalue(res, i, 1)
+				"foo",
+				"foo"
 			);
 		size_t pairlen = strlen(eachPair);
 		size_t newlen = pairlen + a1len;
@@ -491,24 +472,14 @@ account_name_from_id_prepopulate(PGconn* db) {
 }
 
 sstr*
-ledger_newest_30_newstr(PGconn* db) {
+ledger_newest_30_newstr() {
 	LOG_FUNC;
-	PGresult* res = PQexec(db, "SELECT id, created_at, debit_account_id, credit_account_id, note, amount"
-		" FROM transactions"
-		" ORDER BY created_at DESC"
-		" LIMIT 30;");
-	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get ledger_newest_30_newstr:%s\n", PQresultErrorMessage(res));
-		PQclear(res);
-		return 0;
-	}
-	u16 total_rows = PQntuples(res);
 	sstr *out = sstr_new(4096);
 	char* temp = malloc(1024); temp[0]=0;
+	auto total_rows = 3;
 	for (u16 i = 0; i < total_rows; i++) {
-		char* debit_acct_name = params_get_newstr(account_name_from_id_, PQgetvalue(res, i, 2));
-		char* credit_acct_name = params_get_newstr(account_name_from_id_, PQgetvalue(res, i, 3));
+		char* debit_acct_name = "foo";
+		char* credit_acct_name = "foo";
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<tr>"
 			  "<td>%s</td>"
@@ -518,12 +489,12 @@ ledger_newest_30_newstr(PGconn* db) {
 			  "<td>%s</td>"
 			  "<td>%s</td>"
 			"</tr>\n",
-			PQgetvalue(res, i, 0),
-			PQgetvalue(res, i, 1),
+			"foo",
+			"foo",
 			debit_acct_name,
 			credit_acct_name,
-			PQgetvalue(res, i, 4),
-			PQgetvalue(res, i, 5)
+			"foo",
+			"foo"
 		);
 		if (written_to_temp >= 1024) {
 			printf("ERR: ledger_newest_30_newstr: tr truncated to 1024: %s\n", temp);
@@ -534,13 +505,12 @@ ledger_newest_30_newstr(PGconn* db) {
 	}
 	printf("metric: ledger_newest_30_newstr: out_len:%ld\n", out->len);
 	free(temp);
-	PQclear(res);
 	return out;
 }
 
 sstr* account_selection_options_;
 char*
-account_selection_options(PGconn* db) {
+account_selection_options() {
 	// Restart the program so it picks up new accounts.
 	LOG_FUNC;
 	if (account_selection_options_ != NULL) {
@@ -550,20 +520,12 @@ account_selection_options(PGconn* db) {
 
 	account_selection_options_ = sstr_new(1024);
 	sstr* out = account_selection_options_;
-	PGresult* res = PQexec(db, "SELECT id, name from accounts;");
-	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get account_selection_options:%s\n", PQresultErrorMessage(res));
-		PQclear(res);
-		return 0;
-	}
-	u16 total_rows = PQntuples(res);
 	char* temp = malloc(1024); temp[0]=0;
+	auto total_rows = 3;
 	for (u16 i = 0; i < total_rows; i++) {
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<option value=\"%s\">%s</option>",
-			PQgetvalue(res, i, 0),
-			PQgetvalue(res, i, 1)
+			"foo", "foo"
 		);
 		if (written_to_temp >= 1024) {
 			printf("ERR: account_selection_options: temp truncated to 1024: %s\n", temp);
@@ -572,7 +534,6 @@ account_selection_options(PGconn* db) {
 	}
 	printf("metric: account_selection_options: out_len:%ld\n", out->len);
 	free(temp);
-	PQclear(res);
 	return account_selection_options_->buf;
 }
 
@@ -581,8 +542,8 @@ listLedger(httpContext* request) {
 	LOG_FUNC;
 	char* body = read_file_newstr("templates/ledger.html");
 	char* a1;
-	sstr* ln30 = ledger_newest_30_newstr(request->db);
-	char* aso = account_selection_options(request->db);
+	sstr* ln30 = ledger_newest_30_newstr();
+	char* aso = account_selection_options();
 	asprintf(&a1, body, ln30->buf, aso, aso);
 	write_to_client(request, 200, a1);
 	sstr_free(ln30);
@@ -652,22 +613,9 @@ createAccount(httpContext* request) {
 	}
 	char* name2 = strdup(name);
 	url_decode(name2);
-	char* query = "insert into accounts (name, type) values ($1, $2);";
 	const char* values[2];
 	values[0] = name2;
 	values[1] = type;
-	PGresult* res = PQexecParams(request->db, query, 2,
-		NULL, values, NULL, NULL, 0);
-	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-		char* a1;
-		asprintf(&a1, "DBERR: failed to create account: %s\n", PQresultErrorMessage(res));
-		printf("%s", a1);
-		write_to_client(request, 500, a1);
-		free(a1);
-		free(name2);
-		return;
-	}
-	PQclear(res);
 	free(name2);
 	write_redirect(request, 303, "/2");
 	return;
@@ -685,24 +633,11 @@ createLedgerEntry(httpContext* request) {
 		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
 		return;
 	}
-	char* query = "insert into transactions (debit_account_id, credit_account_id, note, amount)"
-		"values ($1, $2, $3, $4);";
 	const char* values[4];
 	values[0] = debitID;
 	values[1] = creditID;
 	values[2] = note;
 	values[3] = amount;
-	PGresult* res = PQexecParams(request->db, query, 4,
-		NULL, values, NULL, NULL, 0);
-	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
-		char* a1;
-		asprintf(&a1, "DBERR: failed to create transaction: %s\n", PQresultErrorMessage(res));
-		printf("%s", a1);
-		write_to_client(request, 422, a1);
-		free(a1);
-		return;
-	}
-	PQclear(res);
 	write_redirect(request, 303, "/1");
 	return;
 }
@@ -731,26 +666,15 @@ incomeStatement(httpContext* request) {
 	asprintf(&stopDate, "%04d%02d01", year, endMonth);
 	char* body;
 
-	// TODO income when I have some.
-	// TODO This captures only increases to the expense accounts. It doesn't capture when an acct
-	// has a decrease. E.g. when the ISP provides a refund to compensate for an outage.
-	auto query_expenses = "select a.name, a.type, sum(t.amount) from transactions t join accounts a on t.debit_account_id = a.id AND a.type = 1 where t.created_at between $1 and $2 group by a.name, a.type;";
 	const char* values[2];
 	values[0] = startDate;
 	values[1] = stopDate;
-	PGresult* res = PQexecParams(request->db, query_expenses, 2, NULL, values, NULL, NULL, 0);
-	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
-		PQclear(res);
-		return;
-	}
-	u16 total_rows = PQntuples(res);
 	u16 trsCap = 1024; u16 trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
 	char tr[512];
 	int netProfitCents = 0;
+	auto total_rows = 3;
 	for (u16 i = 0; i < total_rows; i++) {
-		char* amount = PQgetvalue(res, i, 2);
+		char* amount = "foo";
 		double amount_d = atof(amount);
 		unsigned int amount_i_cents = round(100 * amount_d);
 		netProfitCents -= amount_i_cents;
@@ -760,13 +684,11 @@ incomeStatement(httpContext* request) {
 			  "<td></td>"
 			  "<td>%s</td>"
 			"</tr>\n",
-			PQgetvalue(res, i, 0),
-			PQgetvalue(res, i, 2)
+			"foo", "foo"
 		);
 		if (trLen >=512) {
 			printf("WARN: Truncated trLen when doing incomeStatement. res0:%s res2:%s\n",
-				PQgetvalue(res, i, 0),
-				PQgetvalue(res, i, 2)
+					"foo", "foo"
 			);
 		}
 
@@ -779,7 +701,6 @@ incomeStatement(httpContext* request) {
 		memcpy(trs + trsLen, tr, trLen + 1); // The +1 includes NUL.
 		trsLen += trLen;
 	}
-	PQclear(res);
 
 	auto netProfitDollars = netProfitCents / 100.00;
 	asprintf(&body, template, trs, netProfitDollars);
@@ -814,23 +735,15 @@ balanceSheet(httpContext* request) {
 	char* stopDate;
 	asprintf(&stopDate, "%04d%02d01", year, endMonth);
 	char* body;
-	auto query_bs = read_file_newstr("db/balanceSheet");
 	const char* values[1];
 	printf("stopdate is:%s\n", stopDate);
 	values[0] = stopDate;
-	PGresult* res = PQexecParams(request->db, query_bs, 1, NULL, values, NULL, NULL, 0);
-	if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-		printf("resstat:%d\n", PQresultStatus(res));
-		printf("Couldn't get tx-count:%s\n", PQresultErrorMessage(res));
-		PQclear(res);
-		return;
-	}
-	u16 total_rows = PQntuples(res);
 	size_t trsCap = 1024; size_t trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
 	char tr[512];
 	auto trTemplate = sstr_new(1024);
+	auto total_rows = 3;
 	for (u16 i = 0; i < total_rows; i++) {
-		auto type = atoi(PQgetvalue(res, i, 2));
+		auto type = 1;
 		switch (type) {
 			case 2:
 				sstr_set(trTemplate, "<tr><td>%s</td><td>%s</td><td></td></tr>\n");
@@ -843,13 +756,11 @@ balanceSheet(httpContext* request) {
 		}
 		auto trLen = snprintf(tr, 512,
 			trTemplate->buf,
-			PQgetvalue(res, i, 1),
-			PQgetvalue(res, i, 5)
+			"foo", "foo"
 		);
 		if (trLen >=512) {
 			printf("WARN: Truncated trLen when doing balanceSheet. res0:%s res2:%s\n",
-				PQgetvalue(res, i, 0),
-				PQgetvalue(res, i, 2)
+					"foo", "foo"
 			);
 		}
 		auto newtrsLen = trsLen + trLen;
@@ -863,12 +774,10 @@ balanceSheet(httpContext* request) {
 	}
 	asprintf(&body, template, trs);
 	write_to_client(request, 200, body);
-	PQclear(res);
 	sstr_free(trTemplate);
 	free(trs);
 	free(body);
 	free(template);
-	free(query_bs);
 	free(stopDate);
 	free(startDate);
 }
@@ -921,21 +830,8 @@ threadpool_worker(void* arg) {
 	LOG_FUNC;
 	int thread_idx = *((int*)arg);
 	free(arg);
-	// Each thread gets it's own connection because these conns are not thread-safe.
-	PGconn* db = PQconnectdb(""); // Read from ENV
-	if (PQstatus(db) != CONNECTION_OK) {
-		printf("DB connection failed:%s\n", PQerrorMessage(db));
-		PQfinish(db);
-		printf("Killing thread\n");
-		return NULL;
-	}
-	printf("DB conn made by thread:%d.\n", thread_idx);
-	if (thread_idx == 0) {
-		account_name_from_id_prepopulate(db);
-	}
 	httpContext* request;
 	request = &requests[thread_idx];
-	request->db = db;
 
 	while (1) {
 		sem_wait(client_socket_queue.sem); // Apparently semaphores just don't have spurious wakeups. Nice.
@@ -943,7 +839,6 @@ threadpool_worker(void* arg) {
 		request->client_socket = client_socket;
 		handle_request(request);
 	}
-	PQfinish(db);
 	return NULL;
 }
 
@@ -972,7 +867,18 @@ listen_on_port() {
 }
 
 int
-main() {
+main(int argc, char** argv) {
+	printf("Usage:\n\tserver directory/containing/files/\n\n");
+
+	char* dirpath = argv[1];
+	char* account_path;
+	asprintf(&account_path, "%saccounts.tsv", dirpath);
+	auto accounts = fopen(account_path, "a+");
+	// read path/accounts.tsv. use mode "a+" so for read and append.
+	// read path/transactions.tsv
+	// fill up the accounts and txs arrays
+	// TODO make sure you close files to flush changes in every exit path.
+
 	lfq_init(&client_socket_queue);
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
 		httpContext *req = &requests[i];
