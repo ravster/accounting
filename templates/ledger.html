@@ -12,21 +12,6 @@
   <a href="/5">Income Statement</a>
   <a href="/6">Balance Sheet</a>
 
-  <table class="table table-striped">
-   <thead>
-     <th>ID</th>
-     <th>Date/Time</th>
-     <th>Debit Account</th>
-     <th>Credit Account</th>
-     <th>Note</th>
-     <th>Amount</th>
-   </thead>
-   <tbody>
-	   <!-- ln30: 30 newest entries -->
-	   %s
-   </tbody>
-  </table>
-
   <form action="/4" method="POST">
       <select required name="debit_account_id">
 	      <option value="">Debit</option>
@@ -42,6 +27,21 @@
     <input name="amount" required type="number" step="0.01" min="0.01" placeholder="USD 0.00"/>
     <button type="submit">Submit</button>
   </form>
+
+  <table class="table table-striped">
+   <thead>
+     <th>ID</th>
+     <th>Date/Time</th>
+     <th>Debit Account</th>
+     <th>Credit Account</th>
+     <th>Note</th>
+     <th>Amount</th>
+   </thead>
+   <tbody>
+	   <!-- ln30: 30 newest entries -->
+	   %s
+   </tbody>
+  </table>
 </body>
 </html>
 

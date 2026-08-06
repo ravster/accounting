@@ -51,7 +51,7 @@ tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_acc
 	auto new_tx = &txs[txLen];
 	new_tx->id = id;
 	new_tx->amount = amount;
-	new_tx->note = note;
+	new_tx->note = strdup(note);
 	new_tx->debit_account_id = debit_account_id;
 	new_tx->credit_account_id = credit_account_id;
 	new_tx->created_at = created_at;
@@ -79,13 +79,17 @@ acc_append(u16 id, char* name, u16 type) {
 	accLen++;
 }
 
+// This makes it stupid simple to get the name of an account from it's ID, which we use as the index here;
+// arrays are awesome.
+char** acc_names;
 void
-acc_print_names() {
-	for (int i = 0; i< accLen; i++) {
-		printf("%s, ", accs[i].name);
+acc_names_make() {
+	acc_names = calloc(accLen + 1, sizeof(char*)); // Because account-ids start at 1.
+	for (int i = 0; i < accLen; ++i) {
+		auto acc = accs[i];
+		acc_names[acc.id] = acc.name;
 	}
 }
-
 
 // BEGIN string implementation
 // Basic string manipulation isn't that complicated, but sometimes it is nice to have things taken care of.
@@ -518,33 +522,33 @@ sstr*
 ledger_newest_30_newstr() {
 	LOG_FUNC;
 	sstr *out = sstr_new(4096);
-	char* temp = malloc(1024); temp[0]=0;
-	auto total_rows = 3;
-	for (u16 i = 0; i < total_rows; i++) {
-		char* debit_acct_name = "foo";
-		char* credit_acct_name = "foo";
+	char* temp = calloc(1024, 1);
+	auto total_rows = 30;
+	if (txLen < 30) { total_rows = txLen; }
+	for (int i = txLen - 1; i >= txLen - total_rows; i--) {
+		auto tx = txs[i];
+		auto debit_acct_name = acc_names[tx.debit_account_id];
+		auto credit_acct_name = acc_names[tx.credit_account_id];
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<tr>"
+			  "<td>%hu</td>"
+			  "<td>%u</td>"
 			  "<td>%s</td>"
 			  "<td>%s</td>"
 			  "<td>%s</td>"
-			  "<td>%s</td>"
-			  "<td>%s</td>"
-			  "<td>%s</td>"
+			  "<td>%.2f</td>"
 			"</tr>\n",
-			"foo",
-			"foo",
+			tx.id,
+			tx.created_at,
 			debit_acct_name,
 			credit_acct_name,
-			"foo",
-			"foo"
+			tx.note,
+			tx.amount
 		);
 		if (written_to_temp >= 1024) {
 			printf("ERR: ledger_newest_30_newstr: tr truncated to 1024: %s\n", temp);
 		}
 		sstr_append(out, temp);
-		free(debit_acct_name);
-		free(credit_acct_name);
 	}
 	printf("metric: ledger_newest_30_newstr: out_len:%ld\n", out->len);
 	free(temp);
@@ -587,7 +591,7 @@ listLedger(httpContext* request) {
 	char* a1;
 	sstr* ln30 = ledger_newest_30_newstr();
 	char* aso = account_selection_options();
-	asprintf(&a1, body, ln30->buf, aso, aso);
+	asprintf(&a1, body, aso, aso, ln30->buf);
 	write_to_client(request, 200, a1);
 	sstr_free(ln30);
 	free(a1);
@@ -973,7 +977,7 @@ main(int argc, char** argv) {
 	free(account_path);
 	free(tx_path);
 	load_filedata();
-	return 0;
+	acc_names_make();
 
 	// read path/accounts.tsv. use mode "a+" so for read and append.
 	// read path/transactions.tsv
