@@ -559,33 +559,28 @@ ledger_newest_30_newstr() {
 	return out;
 }
 
-sstr* account_selection_options_;
 char*
-account_selection_options() {
-	// Restart the program so it picks up new accounts.
+account_selection_options_new() {
 	LOG_FUNC;
-	if (account_selection_options_ != NULL) {
-		// Basic memoization. Easy.
-		return account_selection_options_->buf;
-	}
 
-	account_selection_options_ = sstr_new(1024);
-	sstr* out = account_selection_options_;
-	char* temp = malloc(1024); temp[0]=0;
-	auto total_rows = 3;
-	for (u16 i = 0; i < total_rows; i++) {
+	sstr* out = sstr_new(1024);
+	char* temp = calloc(1024, 1);
+	for (u16 i = 0; i < accLen; i++) {
+		auto acc = accs[i];
 		size_t written_to_temp = snprintf(temp, 1024,
-			"<option value=\"%s\">%s</option>",
-			"foo", "foo"
+			"<option value=\"%hu\">%s</option>",
+			acc.id,
+			acc.name
 		);
 		if (written_to_temp >= 1024) {
 			printf("ERR: account_selection_options: temp truncated to 1024: %s\n", temp);
 		}
 		sstr_append(out, temp);
 	}
-	printf("metric: account_selection_options: out_len:%ld\n", out->len);
+	char* out2 = strdup(out->buf);
 	free(temp);
-	return account_selection_options_->buf;
+	free(out);
+	return out2;
 }
 
 void
@@ -594,10 +589,11 @@ listLedger(httpContext* request) {
 	char* body = read_file_newstr("templates/ledger.html");
 	char* a1;
 	sstr* ln30 = ledger_newest_30_newstr();
-	char* aso = account_selection_options();
+	char* aso = account_selection_options_new();
 	asprintf(&a1, body, aso, aso, ln30->buf);
 	write_to_client(request, 200, a1);
 	sstr_free(ln30);
+	free(aso);
 	free(a1);
 	free(body);
 }
