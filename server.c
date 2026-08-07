@@ -79,6 +79,21 @@ acc_append(u16 id, char* name, u16 type) {
 	accLen++;
 }
 
+int
+acc_find_name(char* needle) {
+	for (int i = 0; i< accLen; i++) {
+		if (strcmp(accs[i].name, needle) == 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+void
+acc_append_file(u16 id, char* name, u16 type) {
+	fprintf(account_file, "%hu\t%s\t%hu\n", id, name, type);
+}
+
 // This makes it stupid simple to get the name of an account from it's ID, which we use as the index here;
 // arrays are awesome.
 char** acc_names;
@@ -90,6 +105,13 @@ acc_names_make() {
 		acc_names[acc.id] = acc.name;
 	}
 }
+
+char* acc_types[4] = {
+	"Income",
+	"Expense",
+	"Asset",
+	"Liability"
+};
 
 // BEGIN string implementation
 // Basic string manipulation isn't that complicated, but sometimes it is nice to have things taken care of.
@@ -412,7 +434,7 @@ read_file_newstr(char* path) {
 	LOG_FUNC;
 	FILE* file = fopen(path, "rb");
 	if (file == NULL) {
-		printf("file null\n");
+		printf("file null. path:%s\n", path);
 		exit(1);
 	}
 	fseek(file, 0, SEEK_END);
@@ -432,43 +454,25 @@ homePage(httpContext* request) {
 	free(body);
 }
 
-char*
-resolve_account_type_new_str(char* account_type_enum_s) {
-	u16 account_type_enum = strtoul(account_type_enum_s, NULL, 10);
-	char* actual_acct_type_enum[4] = {
-		"Income",
-		"Expense",
-		"Asset",
-		"Liability"
-	};
-	char* out;
-	if (account_type_enum > 3) {
-		printf("Got an unknown account_type_enum_s:%s\n", account_type_enum_s);
-		out = "Unknown";
-	}
-	out = strdup(actual_acct_type_enum[account_type_enum]);
-	return out;
-}
-
 sstr*
 tr_of_every_account() {
 	LOG_FUNC;
 	sstr *out = sstr_new(512);
 	char* temp;
-	auto total_rows = 3;
-	for (u16 i = 0; i < total_rows; i++) {
-		char* type = resolve_account_type_new_str("foo");
+	for (u16 i = 0; i < accLen; i++) {
+		auto acc = accs[i];
+		char* type = acc_types[acc.type];
 		asprintf(&temp,
 			"<tr>"
-			  "<td>%s</td>"
+			  "<td>%hu</td>"
 			  "<td>%s</td>"
 			  "<td>%s</td>"
 			"</tr>\n",
-			"foo", "foo",
+			acc.id,
+			acc.name,
 			type
 		);
 		sstr_append(out, temp);
-		free(type);
 		free(temp);
 	}
 	return out;
@@ -660,9 +664,20 @@ createAccount(httpContext* request) {
 	}
 	char* name2 = strdup(name);
 	url_decode(name2);
-	const char* values[2];
-	values[0] = name2;
-	values[1] = type;
+
+	int is_name_found = acc_find_name(name2);
+	if (is_name_found) {
+		char* out;
+		asprintf(&out, "The account name:%s is already taken.", name2);
+		write_to_client(request, 422, out);
+		free(out);
+		return;
+	}
+	u16 new_account_id = accLen + 1;
+	int type_i = atoi(type);
+	acc_append(new_account_id, name2, type_i);
+	acc_append_file(new_account_id, name2, type_i);
+
 	free(name2);
 	write_redirect(request, 303, "/2");
 	return;
@@ -969,10 +984,12 @@ main(int argc, char** argv) {
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
 	account_file = fopen(account_path, "a+");
+	setvbuf(account_file, NULL, _IONBF, 0);
 	if (!account_file) { printf("Can't load path:%s\n", account_path); return 1; }
 	char* tx_path;
 	asprintf(&tx_path, "%stransactions.tsv", dirpath);
 	tx_file = fopen(tx_path, "a+");
+	setvbuf(tx_file, NULL, _IONBF, 0);
 	if (!tx_file) { printf("Can't load path:%s\n", tx_path); return 1; }
 	free(account_path);
 	free(tx_path);
