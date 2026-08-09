@@ -1,1 +1,1 @@
-lldb ./server -- $1
+lldb ./r_accounting -- $1

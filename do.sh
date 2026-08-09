@@ -1,5 +1,5 @@
 clang -Wall -Wextra -std=c23 \
   -I/opt/homebrew/opt/jemalloc/include \
   -L/opt/homebrew/opt/jemalloc/lib \
-  -o server server.c -lpthread -ljemalloc -g && \
-./server $1
+  -o r_accounting server.c -lpthread -ljemalloc -g && \
+./r_accounting $1

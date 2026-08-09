@@ -723,47 +723,112 @@ incomeStatement(httpContext* request) {
 	char* stopDate;
 	asprintf(&stopDate, "%04d%02d01", year, endMonth);
 	char* body;
+	u32 start, stop;
+	start = atoi(startDate);
+	stop = atoi(stopDate);
 
-	const char* values[2];
-	values[0] = startDate;
-	values[1] = stopDate;
-	u16 trsCap = 1024; u16 trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
 	char tr[512];
-	int netProfitCents = 0;
-	auto total_rows = 3;
-	for (u16 i = 0; i < total_rows; i++) {
-		char* amount = "foo";
-		double amount_d = atof(amount);
-		unsigned int amount_i_cents = round(100 * amount_d);
-		netProfitCents -= amount_i_cents;
-		u16 trLen = snprintf(tr, 512,
-			"<tr>"
-			  "<td>%s</td>"
-			  "<td></td>"
-			  "<td>%s</td>"
-			"</tr>\n",
-			"foo", "foo"
-		);
-		if (trLen >=512) {
-			printf("WARN: Truncated trLen when doing incomeStatement. res0:%s res2:%s\n",
-					"foo", "foo"
-			);
-		}
+	u16 trLen = 0;
+	float netProfitDollars = 0;
 
-		auto newtrsLen = trsLen + trLen;
-		if (newtrsLen +1 > trsCap) {
-			auto newtrsCap = newtrsLen *2;
-			trs = realloc(trs, newtrsCap);
-			trsCap = newtrsCap;
+	// List of Tx that are in the time period.
+	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
+	for (u16 i = 0; i < txLen; i++) {
+		auto tx = txs[i];
+		if ((tx.created_at < start) || (tx.created_at >= stop)) {
+			continue;
 		}
-		memcpy(trs + trsLen, tr, trLen + 1); // The +1 includes NUL.
-		trsLen += trLen;
+		if (periodTxsLen == periodTxsCap) {
+			periodTxsCap *=2;
+			periodTxs = realloc(periodTxs, periodTxsCap * sizeof(Tx));
+		}
+		periodTxs[periodTxsLen] = tx;
+		periodTxsLen++;
 	}
 
-	auto netProfitDollars = netProfitCents / 100.00;
+	u16 incomeTrsLen = 0; u16 incomeTrsCap = 1024; char* incomeTrs = calloc(incomeTrsCap, 1);
+	u16 expenseTrsLen = 0; u16 expenseTrsCap = 1024; char* expenseTrs = calloc(expenseTrsCap, 1);
+	float tot = 0;
+
+	for (u16 i = 0; i < accLen; i++) {
+		auto acc = accs[i];
+		switch (acc.type) {
+			case 0: // Income
+				tot = 0;
+				for (u16 i = 0; i < periodTxsLen; i++) {
+					auto tx = periodTxs[i];
+					if (tx.credit_account_id != acc.id) { continue; }
+					tot += tx.amount;
+				}
+				netProfitDollars += tot;
+
+				// write to incomeTrs
+				trLen = snprintf(tr, 512,
+						"<tr>"
+						"<td>%s</td>"
+						"<td>%.2f</td>"
+						"<td></td>"
+						"</tr>\n",
+						acc.name, tot);
+				if (trLen >=512) {
+					printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
+							acc.name, tot);
+					trLen--; // For the benefit of memcpy below;
+				}
+				if (1+ incomeTrsLen + trLen > incomeTrsCap) {
+					incomeTrsCap *= 2;
+					incomeTrs = realloc(incomeTrs, incomeTrsCap);
+				}
+				memcpy(incomeTrs + incomeTrsLen, tr, trLen + 1);
+				incomeTrsLen += trLen;
+				break;
+
+			case 1: // Expense
+				tot = 0;
+				for (u16 i = 0; i < periodTxsLen; i++) {
+					auto tx = periodTxs[i];
+					if (tx.debit_account_id != acc.id) { continue; }
+					tot += tx.amount;
+				}
+				netProfitDollars -= tot;
+
+				// write to expenseTrs
+				trLen = snprintf(tr, 512,
+						"<tr>"
+						"<td>%s</td>"
+						"<td></td>"
+						"<td>%.2f</td>"
+						"</tr>\n",
+						acc.name, tot);
+				if (trLen >=512) {
+					printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
+							acc.name, tot);
+					trLen--; // For the benefit of memcpy below;
+				}
+				if (1+ expenseTrsLen + trLen > expenseTrsCap) {
+					expenseTrsCap *= 2;
+					expenseTrs = realloc(expenseTrs, expenseTrsCap);
+				}
+				memcpy(expenseTrs + expenseTrsLen, tr, trLen + 1);
+				expenseTrsLen += trLen;
+				break;
+
+			default:
+				continue;
+		}
+	}
+
+	char* trs = calloc(incomeTrsLen + expenseTrsLen + 1, 1);
+	memcpy(trs, incomeTrs, incomeTrsLen + 1);
+	memcpy(trs + incomeTrsLen, expenseTrs, expenseTrsLen + 1);
+
+	// TODO Make next month and previous month links.
 	asprintf(&body, template, trs, netProfitDollars);
 	write_to_client(request, 200, body);
 	free(trs);
+	free(expenseTrs);
+	free(incomeTrs);
+	free(periodTxs);
 	free(body);
 	free(template);
 	free(stopDate);
@@ -772,6 +837,8 @@ incomeStatement(httpContext* request) {
 
 void
 balanceSheet(httpContext* request) {
+	// TODO Make next month and previous month links.
+	// TODO Make this work with the in-memory data next.
 	LOG_FUNC;
 	auto template = read_file_newstr("templates/balanceSheet.html");
 	u16 month, year;
