@@ -716,12 +716,31 @@ incomeStatement(httpContext* request) {
 	char* startDate;
 	asprintf(&startDate, "%04d%02d01", year, month);
 	auto endMonth = month + 1;
+	auto endYear = year;
 	if (endMonth == 13) {
 		endMonth = 1;
-		year += 1;
+		endYear = year + 1;
 	}
 	char* stopDate;
-	asprintf(&stopDate, "%04d%02d01", year, endMonth);
+	asprintf(&stopDate, "%04d%02d01", endYear, endMonth);
+
+	// Links
+	char *prevLink, *nextLink;
+	u16 prevYear = year;
+	u16 prevMonth = month - 1;
+	if (prevMonth == 0) {
+		prevMonth = 12;
+		prevYear--;
+	}
+	asprintf(&prevLink, "m=%hu&y=%hu", prevMonth, prevYear);
+	u16 nextYear = year;
+	u16 nextMonth = month + 1;
+	if (nextMonth == 13) {
+		nextMonth = 1;
+		nextYear++;
+	}
+	asprintf(&nextLink, "m=%hu&y=%hu", nextMonth, nextYear);
+
 	char* body;
 	u32 start, stop;
 	start = atoi(startDate);
@@ -823,7 +842,7 @@ incomeStatement(httpContext* request) {
 	memcpy(trs + incomeTrsLen, expenseTrs, expenseTrsLen + 1);
 
 	// TODO Make next month and previous month links.
-	asprintf(&body, template, trs, netProfitDollars);
+	asprintf(&body, template, prevLink, nextLink, trs, netProfitDollars);
 	write_to_client(request, 200, body);
 	free(trs);
 	free(expenseTrs);
