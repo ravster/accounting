@@ -42,7 +42,7 @@ typedef struct {
 Tx *txs;
 u16 txLen, txCap;
 
-void
+Tx*
 tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_account_id, u32 created_at) {
 	if (txLen == txCap) {
 		txCap *= 2;
@@ -56,6 +56,14 @@ tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_acc
 	new_tx->credit_account_id = credit_account_id;
 	new_tx->created_at = created_at;
 	txLen++;
+	return new_tx;
+}
+
+void
+tx_append_to_file(Tx* newTx) {
+	fprintf(tx_file, "%hu\t%.2f\t%s\t%hu\t%hu\t%u\n",
+			newTx->id, newTx->amount, newTx->note,
+			newTx->debit_account_id, newTx->credit_account_id, newTx->created_at);
 }
 
 typedef struct {
@@ -691,11 +699,19 @@ createLedgerEntry(httpContext* request) {
 		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
 		return;
 	}
-	const char* values[4];
-	values[0] = debitID;
-	values[1] = creditID;
-	values[2] = note;
-	values[3] = amount;
+
+	// TODO Check debit and credit id map to actual accounts
+
+	Tx* lastTx = &txs[txLen - 1];
+	u16 newId = lastTx->id + 1;
+	time_t t1 = time(NULL);
+	struct tm* t2 = localtime(&t1);
+	char timeBuf[9];
+	strftime(timeBuf, 9, "%Y%m%d", t2);
+
+	auto newTx = tx_append(newId, atof(amount), note, atoi(debitID), atoi(creditID), atoi(timeBuf));
+	tx_append_to_file(newTx);
+
 	write_redirect(request, 303, "/1");
 	return;
 }
@@ -841,9 +857,10 @@ incomeStatement(httpContext* request) {
 	memcpy(trs, incomeTrs, incomeTrsLen + 1);
 	memcpy(trs + incomeTrsLen, expenseTrs, expenseTrsLen + 1);
 
-	// TODO Make next month and previous month links.
 	asprintf(&body, template, prevLink, nextLink, trs, netProfitDollars);
 	write_to_client(request, 200, body);
+	free(nextLink);
+	free(prevLink);
 	free(trs);
 	free(expenseTrs);
 	free(incomeTrs);
@@ -1090,6 +1107,10 @@ main(int argc, char** argv) {
 		req->postP = malloc(256);
 	}
 
+	// TODO Actually, since this is meant to be a local program, we don't really need multi-threading. That's
+	// just a cost for no benefit. It's a single-user program, and that user is a human. The slowest part is
+	// the human. If Redis can be single-threaded and work fine, we don't need multi-threading for this.
+	//
 	// Set up thread pool
 	// param pool_size uint
 	// param threadpool_worker func
