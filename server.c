@@ -379,6 +379,9 @@ parse_request(httpContext* request) {
 	LOG_FUNC;
 	int client_socket = request->client_socket;
 	char* buf = request->request_buf;
+	// TODO switch to using recv(client_socket, buf, 2047, 0) and then keep reading into a buffer till you
+	// find "\r\n\r\n". This MUST be in a loop because the network might give us half the headers in one
+	// chunk, and then the rest of the request headers and body in another chunk.
 	int bytes_read = read(client_socket, buf, 2047);
 	printf("metric: request_size: %d\n", bytes_read);
 
@@ -994,6 +997,15 @@ threadpool_worker(void* arg) {
 	httpContext* request;
 	request = &requests[thread_idx];
 
+	// TODO right now we replicate HTTP1.0 by closing every HTTP connection after giving the response to the
+	// browser. This is bad. HTTP1.1 allows for persistent connections, and we should use it. Each thread should
+	// hold on to it's client socket and do the recv() call in a loop. Browsers already reuse HTTP 1.1 conns,
+	// so we just need to recv() on the conn till we get more information. Set a timeout of 5 minutes to
+	// kill the connection if we get no data.
+	//
+	// Note that keeping connections open requires that we have a multi-threaded program. So much for the plan
+	// of switching to a single-thread. Oh well. If the world has made keep-alive a default expectation, I
+	// should roll with it, and not be too much of a hipster.
 	while (1) {
 		sem_wait(client_socket_queue.sem); // Apparently semaphores just don't have spurious wakeups. Nice.
 		int client_socket = lfq_pop(&client_socket_queue);
@@ -1094,11 +1106,6 @@ main(int argc, char** argv) {
 	free(tx_path);
 	load_filedata();
 	acc_names_make();
-
-	// read path/accounts.tsv. use mode "a+" so for read and append.
-	// read path/transactions.tsv
-	// fill up the accounts and txs arrays
-	// TODO make sure you close files to flush changes in every exit path.
 
 	lfq_init(&client_socket_queue);
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
