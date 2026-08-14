@@ -353,7 +353,7 @@ parse_route(u16* route, char* endpoint) {
 void
 write_to_client(httpContext* req, int httpStatus, char* body) {
 	char* a1;
-	asprintf(&a1, "HTTP/1.1 %d \r\nConnection: close\r\nContent-Length: %lu\r\n\r\n%s",
+	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
 		httpStatus,
 		strlen(body),
 		body
@@ -365,7 +365,8 @@ write_to_client(httpContext* req, int httpStatus, char* body) {
 void
 write_redirect(httpContext* req, int httpStatus, char* newLocation) {
 	char* a1;
-	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: 0\r\nLocation: %s\r\nConnection: close\r\n\r\n",
+	// TODO stop closing the connection. I want the handler threads to support HTTP1.1 persistentConns.
+	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: 0\r\nLocation: %s\r\n\r\n",
 		httpStatus,
 		newLocation
 	);
@@ -377,18 +378,7 @@ write_redirect(httpContext* req, int httpStatus, char* newLocation) {
 int // OK
 parse_request(httpContext* request) {
 	LOG_FUNC;
-	int client_socket = request->client_socket;
 	char* buf = request->request_buf;
-	// TODO switch to using recv(client_socket, buf, 2047, 0) and then keep reading into a buffer till you
-	// find "\r\n\r\n". This MUST be in a loop because the network might give us half the headers in one
-	// chunk, and then the rest of the request headers and body in another chunk.
-	int bytes_read = read(client_socket, buf, 2047);
-	printf("metric: request_size: %d\n", bytes_read);
-
-	if (bytes_read == 2047) {
-		write_to_client(request, 413, "Request too large. Max is 2KB.");
-		return 0;
-	}
 
 	// Get first line. Max 512B.
 	char* line_end = strstr(buf, "\r\n");
@@ -950,7 +940,6 @@ balanceSheet(httpContext* request) {
 void*
 handle_request(httpContext* request) {
 	LOG_FUNC;
-	httpContext_clear(request);
 	int ok = parse_request(request);
 	if (!ok) {
 		// parse_request will send response to client.
@@ -994,8 +983,8 @@ threadpool_worker(void* arg) {
 	LOG_FUNC;
 	int thread_idx = *((int*)arg);
 	free(arg);
-	httpContext* request;
-	request = &requests[thread_idx];
+	httpContext* ctx;
+	ctx = &requests[thread_idx];
 
 	// TODO right now we replicate HTTP1.0 by closing every HTTP connection after giving the response to the
 	// browser. This is bad. HTTP1.1 allows for persistent connections, and we should use it. Each thread should
@@ -1009,8 +998,33 @@ threadpool_worker(void* arg) {
 	while (1) {
 		sem_wait(client_socket_queue.sem); // Apparently semaphores just don't have spurious wakeups. Nice.
 		int client_socket = lfq_pop(&client_socket_queue);
-		request->client_socket = client_socket;
-		handle_request(request);
+		struct timeval timeout;
+		timeout.tv_sec = 120;
+		auto sso = setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+		if (sso < 0) {
+			printf("Couldn't set the socket timeout.\n");
+			close(client_socket);
+			return 0;
+		}
+		// We got a client socket from the main thread. Now we have to serve this client multiple times till the client times out or closes the conn.
+
+		while (1) {
+			httpContext_clear(ctx);
+			char* buf = ctx->request_buf;
+			// TODO What happens if we don't get the full request in one network packet/chunk? Figure this out later. Do the happy path first.
+			int bytes_read = recv(client_socket, buf, 2047, 0);
+			if (bytes_read < 1) {
+				printf("Something wrong with reading client-socket. Closing.\n");
+				break;
+			} else if (bytes_read == 2047) {
+				write_to_client(ctx, 413, "Request too large. Max is 2KB.");
+				break;
+			}
+
+			ctx->client_socket = client_socket;
+			handle_request(ctx);
+		}
+		close(client_socket);
 	}
 	return NULL;
 }
