@@ -133,7 +133,6 @@ typedef struct {
 
 sstr*
 sstr_new(size_t cap) {
-	LOG_FUNC;
 	sstr* s = malloc(sizeof(sstr));
 	s->len = 0;
 	s->cap = cap;
@@ -144,7 +143,6 @@ sstr_new(size_t cap) {
 
 void
 sstr_free(sstr* s) {
-	LOG_FUNC;
 	free(s->buf);
 	free(s);
 }
@@ -154,7 +152,6 @@ sstr_append(sstr* s, char* data) {
 	size_t data_len = strlen(data);
 	size_t new_total_len = s->len + data_len;
 	if (s->cap < 1+ new_total_len) {
-		printf("sstr_append: raising cap\n");
 		size_t new_cap = new_total_len * 2;
 		s->buf = realloc(s->buf, new_cap);
 		s->cap = new_cap;
@@ -292,7 +289,6 @@ httpContext_clear(httpContext* req) {
 
 int // ok
 fillGetParams(httpContext* req) {
-	LOG_FUNC;
 	char* qmark = strchr(req->endpoint, '?');
 	if (qmark == NULL) { return 1; }
 	char* after_qmark = qmark+1;
@@ -305,7 +301,6 @@ fillGetParams(httpContext* req) {
 
 int // ok
 fillPostParams(httpContext* req) {
-	LOG_FUNC;
 	char* reqBodyStart = strstr(req->request_buf, "\r\n\r\n");
 	// Nothing to do.
 	if ((reqBodyStart == NULL) || (strlen(reqBodyStart) == 0)) { return 1; }
@@ -314,7 +309,6 @@ fillPostParams(httpContext* req) {
 	req->postP = realloc(req->postP, newLen + 1);
 	// +1 to get the automatic null-termination.
 	strncpy(req->postP, reqBodyStart, newLen + 1);
-	printf("Post params overwritten. Now:%s\n", req->postP);
 	return 1;
 }
 
@@ -377,7 +371,6 @@ write_redirect(httpContext* req, int httpStatus, char* newLocation) {
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
 int // OK
 parse_request(httpContext* request) {
-	LOG_FUNC;
 	char* buf = request->request_buf;
 
 	// Get first line. Max 512B.
@@ -432,7 +425,6 @@ parse_request(httpContext* request) {
 
 char*
 read_file_newstr(char* path) {
-	LOG_FUNC;
 	FILE* file = fopen(path, "rb");
 	if (file == NULL) {
 		printf("file null. path:%s\n", path);
@@ -457,7 +449,6 @@ homePage(httpContext* request) {
 
 sstr*
 tr_of_every_account() {
-	LOG_FUNC;
 	sstr *out = sstr_new(512);
 	char* temp;
 	for (u16 i = 0; i < accLen; i++) {
@@ -481,7 +472,6 @@ tr_of_every_account() {
 
 void
 listAccounts(httpContext* request) {
-	LOG_FUNC;
 	char* body = read_file_newstr("templates/listAccounts.html");
 	char* a1;
 	sstr* trs = tr_of_every_account();
@@ -496,7 +486,6 @@ char* account_name_from_id_;
 // Called at start of program.
 u16 // ok
 account_name_from_id_prepopulate() {
-	LOG_FUNC;
 	char* a1 = malloc(1024); a1[0]=0;
 	size_t a1len = 0;
 	size_t a1cap = 1024;
@@ -525,7 +514,6 @@ account_name_from_id_prepopulate() {
 
 sstr*
 ledger_newest_30_newstr() {
-	LOG_FUNC;
 	sstr *out = sstr_new(4096);
 	char* temp = calloc(1024, 1);
 	auto total_rows = 30;
@@ -562,7 +550,6 @@ ledger_newest_30_newstr() {
 
 char*
 account_selection_options_new() {
-	LOG_FUNC;
 
 	sstr* out = sstr_new(1024);
 	char* temp = calloc(1024, 1);
@@ -586,7 +573,6 @@ account_selection_options_new() {
 
 void
 listLedger(httpContext* request) {
-	LOG_FUNC;
 	char* body = read_file_newstr("templates/ledger.html");
 	char* a1;
 	sstr* ln30 = ledger_newest_30_newstr();
@@ -640,7 +626,6 @@ void url_decode(char* str) {
 
 void
 testPost(httpContext* req) {
-	LOG_FUNC;
 	char* a1;
 	char* bigText = params_get_newstr(req->postP, "note");
 	char* a2 = strdup(bigText);
@@ -652,7 +637,6 @@ testPost(httpContext* req) {
 
 void
 createAccount(httpContext* request) {
-	LOG_FUNC;
 	char* name = params_get_newstr(request->postP, "name");
 	char* type = params_get_newstr(request->postP, "type");
 	if ((name == NULL) || (type == NULL)) {
@@ -682,7 +666,6 @@ createAccount(httpContext* request) {
 
 void
 createLedgerEntry(httpContext* request) {
-	LOG_FUNC;
 	char* debitID = params_get_newstr(request->postP, "debit_account_id");
 	char* creditID = params_get_newstr(request->postP, "credit_account_id");
 	char* note = params_get_newstr(request->postP, "note");
@@ -711,7 +694,6 @@ createLedgerEntry(httpContext* request) {
 
 void
 incomeStatement(httpContext* request) {
-	LOG_FUNC;
 	auto template = read_file_newstr("templates/incomeStatement.html");
 	u16 month, year;
 	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
@@ -868,7 +850,6 @@ void
 balanceSheet(httpContext* request) {
 	// TODO Make next month and previous month links.
 	// TODO Make this work with the in-memory data next.
-	LOG_FUNC;
 	auto template = read_file_newstr("templates/balanceSheet.html");
 	u16 month, year;
 	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
@@ -939,7 +920,6 @@ balanceSheet(httpContext* request) {
 // This function is called from a threadpool worker, to handle the request.
 void*
 handle_request(httpContext* request) {
-	LOG_FUNC;
 	int ok = parse_request(request);
 	if (!ok) {
 		// parse_request will send response to client.
@@ -980,7 +960,6 @@ handle_request(httpContext* request) {
 
 void*
 threadpool_worker(void* arg) {
-	LOG_FUNC;
 	int thread_idx = *((int*)arg);
 	free(arg);
 	httpContext* ctx;
@@ -1056,7 +1035,6 @@ listen_on_port() {
 // Should blow up program if fail.
 void
 load_filedata() {
-	LOG_FUNC;
 	char buf[256];
 
 	rewind(account_file);
