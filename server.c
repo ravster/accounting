@@ -715,8 +715,6 @@ void
 incomeStatement(httpContext* request) {
 	auto template = read_file_newstr("templates/incomeStatement.html");
 
-	// Calc startDate and stopDate INT from the given params, or use current month.
-	// also month and year, INT
 	u16 month, year;
 	u32 start, stop;
 	calc_month(&month, &year, &start, &stop, request->getP);
@@ -854,25 +852,10 @@ balanceSheet(httpContext* request) {
 	auto template = read_file_newstr("templates/balanceSheet.html");
 
 	u16 month, year;
-	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
-	if (getPresult != 2) {
-		// Use current month & year
-		time_t t1 = time(NULL);
-		struct tm* t2 = localtime(&t1);
-		year = t2->tm_year + 1900;
-		month = t2->tm_mon+ 1;
-	}
-	char* startDate;
-	asprintf(&startDate, "%04d%02d01", year, month);
-	auto endMonth = month + 1;
-	if (endMonth == 13) {
-		endMonth = 1;
-		year += 1;
-	}
-	char* stopDate;
-	asprintf(&stopDate, "%04d%02d01", year, endMonth);
+	u32 start, stop;
+	calc_month(&month, &year, &start, &stop, request->getP);
+
 	char* body;
-	printf("stopdate is:%s\n", stopDate);
 
 	size_t trsCap = 1024; size_t trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
 	char tr[512];
@@ -914,8 +897,6 @@ balanceSheet(httpContext* request) {
 	free(trs);
 	free(body);
 	free(template);
-	free(stopDate);
-	free(startDate);
 }
 
 // This function is called from a threadpool worker, to handle the request.
