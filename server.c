@@ -910,7 +910,7 @@ void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
 			bsacc = bs_accs_find_by_id(bs_accs_l, tx.debit_account_id);
 			if (bsacc) {
 				bsacc->total -= tx.amount;
-			} else { continue; }
+			}
 		}
 
 		bsacc = bs_accs_find_by_id(bs_accs_a, tx.credit_account_id);
