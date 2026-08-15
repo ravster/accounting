@@ -693,7 +693,7 @@ createLedgerEntry(httpContext* request) {
 }
 
 void
-calc_month(u16 *month, u16 *year, u32 *start, u32* stop, const char* getP) {
+calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* nextLink, const char* getP) {
 	auto getPresult = sscanf(getP, "m=%hd&y=%hd", month, year);
 	if (getPresult != 2) {
 		auto t1 = time(NULL); // Use current month & year
@@ -709,6 +709,21 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, const char* getP) {
 		endYear = *year + 1;
 	}
 	*stop = (endYear * 10000) + (endMonth * 100) + 1;
+
+	u16 prevYear = *year;
+	u16 prevMonth = *month - 1;
+	if (prevMonth == 0) {
+		prevMonth = 12;
+		prevYear--;
+	}
+	snprintf(prevLink, 12, "m=%hu&y=%hu", prevMonth, prevYear);
+	u16 nextYear = *year;
+	u16 nextMonth = *month + 1;
+	if (nextMonth == 13) {
+		nextMonth = 1;
+		nextYear++;
+	}
+	snprintf(nextLink, 12, "m=%hu&y=%hu", nextMonth, nextYear);
 }
 
 void
@@ -717,24 +732,8 @@ incomeStatement(httpContext* request) {
 
 	u16 month, year;
 	u32 start, stop;
-	calc_month(&month, &year, &start, &stop, request->getP);
-
-	// Links
-	char *prevLink, *nextLink;
-	u16 prevYear = year;
-	u16 prevMonth = month - 1;
-	if (prevMonth == 0) {
-		prevMonth = 12;
-		prevYear--;
-	}
-	asprintf(&prevLink, "m=%hu&y=%hu", prevMonth, prevYear);
-	u16 nextYear = year;
-	u16 nextMonth = month + 1;
-	if (nextMonth == 13) {
-		nextMonth = 1;
-		nextYear++;
-	}
-	asprintf(&nextLink, "m=%hu&y=%hu", nextMonth, nextYear);
+	char prevLink[12], nextLink[12];
+	calc_month(&month, &year, &start, &stop, prevLink, nextLink, request->getP);
 
 	char* body;
 
@@ -835,8 +834,6 @@ incomeStatement(httpContext* request) {
 
 	asprintf(&body, template, prevLink, nextLink, trs, netProfitDollars);
 	write_to_client(request, 200, body);
-	free(nextLink);
-	free(prevLink);
 	free(trs);
 	free(expenseTrs);
 	free(incomeTrs);
@@ -847,13 +844,13 @@ incomeStatement(httpContext* request) {
 
 void
 balanceSheet(httpContext* request) {
-	// TODO Make next month and previous month links.
 	// TODO Make this work with the in-memory data next.
 	auto template = read_file_newstr("templates/balanceSheet.html");
 
 	u16 month, year;
 	u32 start, stop;
-	calc_month(&month, &year, &start, &stop, request->getP);
+	char prevLink[12], nextLink[12];
+	calc_month(&month, &year, &start, &stop, prevLink, nextLink, request->getP);
 
 	char* body;
 
@@ -891,7 +888,7 @@ balanceSheet(httpContext* request) {
 		memcpy(trs + trsLen, tr, trLen + 1); // The +1 includes NUL.
 		trsLen += trLen;
 	}
-	asprintf(&body, template, trs);
+	asprintf(&body, template, prevLink, nextLink, trs);
 	write_to_client(request, 200, body);
 	sstr_free(trTemplate);
 	free(trs);
