@@ -693,27 +693,33 @@ createLedgerEntry(httpContext* request) {
 }
 
 void
-incomeStatement(httpContext* request) {
-	auto template = read_file_newstr("templates/incomeStatement.html");
-	u16 month, year;
-	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
+calc_month(u16 *month, u16 *year, u32 *start, u32* stop, const char* getP) {
+	auto getPresult = sscanf(getP, "m=%hd&y=%hd", month, year);
 	if (getPresult != 2) {
-		// Use current month & year
-		time_t t1 = time(NULL);
-		struct tm* t2 = localtime(&t1);
-		year = t2->tm_year + 1900;
-		month = t2->tm_mon+ 1;
+		auto t1 = time(NULL); // Use current month & year
+		auto* t2 = localtime(&t1);
+		*year = t2->tm_year + 1900;
+		*month = t2->tm_mon+ 1;
 	}
-	char* startDate;
-	asprintf(&startDate, "%04d%02d01", year, month);
-	auto endMonth = month + 1;
-	auto endYear = year;
+	*start = (*year*10000) + (*month * 100) + 1;
+	auto endMonth = *month + 1;
+	auto endYear = *year;
 	if (endMonth == 13) {
 		endMonth = 1;
-		endYear = year + 1;
+		endYear = *year + 1;
 	}
-	char* stopDate;
-	asprintf(&stopDate, "%04d%02d01", endYear, endMonth);
+	*stop = (endYear * 10000) + (endMonth * 100) + 1;
+}
+
+void
+incomeStatement(httpContext* request) {
+	auto template = read_file_newstr("templates/incomeStatement.html");
+
+	// Calc startDate and stopDate INT from the given params, or use current month.
+	// also month and year, INT
+	u16 month, year;
+	u32 start, stop;
+	calc_month(&month, &year, &start, &stop, request->getP);
 
 	// Links
 	char *prevLink, *nextLink;
@@ -733,9 +739,6 @@ incomeStatement(httpContext* request) {
 	asprintf(&nextLink, "m=%hu&y=%hu", nextMonth, nextYear);
 
 	char* body;
-	u32 start, stop;
-	start = atoi(startDate);
-	stop = atoi(stopDate);
 
 	char tr[512];
 	u16 trLen = 0;
@@ -842,8 +845,6 @@ incomeStatement(httpContext* request) {
 	free(periodTxs);
 	free(body);
 	free(template);
-	free(stopDate);
-	free(startDate);
 }
 
 void
@@ -851,6 +852,7 @@ balanceSheet(httpContext* request) {
 	// TODO Make next month and previous month links.
 	// TODO Make this work with the in-memory data next.
 	auto template = read_file_newstr("templates/balanceSheet.html");
+
 	u16 month, year;
 	int getPresult = sscanf(request->getP, "m=%hd&y=%hd", &month, &year);
 	if (getPresult != 2) {
@@ -870,9 +872,8 @@ balanceSheet(httpContext* request) {
 	char* stopDate;
 	asprintf(&stopDate, "%04d%02d01", year, endMonth);
 	char* body;
-	const char* values[1];
 	printf("stopdate is:%s\n", stopDate);
-	values[0] = stopDate;
+
 	size_t trsCap = 1024; size_t trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
 	char tr[512];
 	auto trTemplate = sstr_new(1024);
@@ -993,7 +994,7 @@ threadpool_worker(void* arg) {
 			// TODO What happens if we don't get the full request in one network packet/chunk? Figure this out later. Do the happy path first.
 			int bytes_read = recv(client_socket, buf, 2047, 0);
 			if (bytes_read < 1) {
-				printf("Something wrong with reading client-socket. Closing.\n");
+				printf("Client socket. Either timeout or error. Closing.\n");
 				break;
 			} else if (bytes_read == 2047) {
 				write_to_client(ctx, 413, "Request too large. Max is 2KB.");
