@@ -21,8 +21,6 @@
 #define QUEUE_CAPACITY 64
 #define QUEUE_MASK (QUEUE_CAPACITY - 1)
 
-#define LOG_INFO(fmt, ...) \
-    printf("[INFO] [%s:%d -> %s()] " fmt "\n", __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 #define LOG_FUNC \
     printf("%s\n", __func__)
 
@@ -842,11 +840,129 @@ incomeStatement(httpContext* request) {
 	free(template);
 }
 
+typedef struct {
+	u16 id;
+	int32_t total;
+	char* name;
+} BsAccTotal;
+typedef struct {
+	BsAccTotal* data;
+	u16 len;
+	u16 cap;
+} BsAccs;
+
+BsAccs*
+bs_accs_new() {
+	BsAccs* out = malloc(sizeof(BsAccs));
+	out->cap = 20;
+	out->len = 0;
+	out->data = calloc(out->cap, sizeof(BsAccs));
+	return out;
+}
+
+void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
+	if (bsAccs->len == bsAccs->cap) {
+		bsAccs->cap *= 2;
+		bsAccs->data = realloc(bsAccs->data, bsAccs->cap * sizeof(BsAccs));
+	}
+	auto acc = &bsAccs->data[bsAccs->len];
+	acc->id = id;
+	acc->name = name;
+	bsAccs->len++;
+}
+
+void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
+	for (u16 i = 0; i < accLen; i++) {
+		auto acc = accs[i];
+		switch (acc.type) {
+			case 2:
+				bs_accs_append(assets, acc.id, acc.name);
+				break;
+			case 3:
+				bs_accs_append(liabilities, acc.id, acc.name);
+				break;
+			default:
+				continue;
+		}
+	}
+}
+
+BsAccTotal*
+bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
+	for (u16 i=0; i<bsAccs->len; i++) {
+		auto *it = &bsAccs->data[i];
+		if (it->id == id) {
+			return it;
+		}
+	}
+	return NULL;
+}
+
+void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
+	for (u16 i=0; i<txLen; i++) {
+		auto tx = txs[i];
+		if (tx.created_at > stop) { continue; }
+
+		auto* bsacc = bs_accs_find_by_id(bs_accs_a, tx.debit_account_id);
+		if (bsacc) {
+			bsacc->total += tx.amount;
+		} else {
+			bsacc = bs_accs_find_by_id(bs_accs_l, tx.debit_account_id);
+			if (bsacc) {
+				bsacc->total -= tx.amount;
+			} else { continue; }
+		}
+
+		bsacc = bs_accs_find_by_id(bs_accs_a, tx.credit_account_id);
+		if (bsacc) {
+			bsacc->total -= tx.amount;
+		} else {
+			bsacc = bs_accs_find_by_id(bs_accs_l, tx.credit_account_id);
+			if (bsacc) {
+				bsacc->total += tx.amount;
+			} else { continue; }
+		}
+	}
+}
+
+char*
+bs_accs_trs_new(BsAccs* accs, uint8_t accType) {
+	u16 outLen=0; u16 outCap=1024; char* out= calloc(outCap, 1);
+	for (u16 i=0; i<accs->len; i++) {
+		auto it = accs->data[i];
+		if (outLen > outCap-90) {
+			outCap *=2;
+			out = realloc(out, outCap);
+		}
+		u16 written = 100;
+		switch (accType) {
+			case 2:
+				written = snprintf(out+outLen, 89,
+						"<tr><td>%s</td><td>%d</td><td></td></tr>\n", it.name, it.total);
+				break;
+			case 3:
+				written = snprintf(out+outLen, 89,
+						"<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total);
+				break;
+			default:
+				LOG_FUNC;
+				printf("Shouldn't have gotten to this default case.\n");
+		}
+		if (written > 89) {
+			LOG_FUNC;
+			printf("snprintf fail. name=%s total=%u\n", it.name, it.total);
+		}
+		outLen += written;
+	}
+	return out;
+}
+
 void
 balanceSheet(httpContext* request) {
-	// TODO Make this work with the in-memory data next.
 	auto template = read_file_newstr("templates/balanceSheet.html");
 
+	printf("%s\n", request->getP);
+	// TODO clear ctx between requests coming into this thread with the persistent conn.
 	u16 month, year;
 	u32 start, stop;
 	char prevLink[12], nextLink[12];
@@ -854,45 +970,20 @@ balanceSheet(httpContext* request) {
 
 	char* body;
 
-	size_t trsCap = 1024; size_t trsLen = 0; char* trs = malloc(trsCap); trs[0]=0;
-	char tr[512];
-	auto trTemplate = sstr_new(1024);
-	auto total_rows = 3;
-	for (u16 i = 0; i < total_rows; i++) {
-		auto type = 1;
-		switch (type) {
-			case 2:
-				sstr_set(trTemplate, "<tr><td>%s</td><td>%s</td><td></td></tr>\n");
-				break;
-			case 3:
-				sstr_set(trTemplate, "<tr><td>%s</td><td></td><td>%s</td></tr>\n");
-				break;
-			default:
-				sstr_set(trTemplate, "Something wrong with trTemplate");
-		}
-		auto trLen = snprintf(tr, 512,
-			trTemplate->buf,
-			"foo", "foo"
-		);
-		if (trLen >=512) {
-			printf("WARN: Truncated trLen when doing balanceSheet. res0:%s res2:%s\n",
-					"foo", "foo"
-			);
-		}
-		auto newtrsLen = trsLen + trLen;
-		if (newtrsLen +1 > trsCap) {
-			auto newtrsCap = newtrsLen *2;
-			trs = realloc(trs, newtrsCap);
-			trsCap = newtrsCap;
-		}
-		memcpy(trs + trsLen, tr, trLen + 1); // The +1 includes NUL.
-		trsLen += trLen;
-	}
-	asprintf(&body, template, prevLink, nextLink, trs);
+	auto bs_accs_a = bs_accs_new();
+	auto bs_accs_l = bs_accs_new();
+	bs_accs_populate_new(bs_accs_a, bs_accs_l); // Asset, Liability
+	bs_accs_calc_totals(bs_accs_a, bs_accs_l, stop);
+	auto trs_a = bs_accs_trs_new(bs_accs_a, 2);
+	auto trs_l = bs_accs_trs_new(bs_accs_l, 3);
+	free(bs_accs_a);
+	free(bs_accs_l);
+
+	asprintf(&body, template, prevLink, nextLink, trs_a, trs_l);
 	write_to_client(request, 200, body);
-	sstr_free(trTemplate);
-	free(trs);
 	free(body);
+	free(trs_a);
+	free(trs_l);
 	free(template);
 }
 
