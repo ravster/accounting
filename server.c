@@ -112,11 +112,11 @@ acc_names_make() {
 	}
 }
 
-char* acc_types[4] = {
-	"Income",
-	"Expense",
-	"Asset",
-	"Liability"
+enum AccTypes {
+	INCOME,
+	EXPENSE,
+	ASSET,
+	LIABILITY
 };
 
 // BEGIN string implementation
@@ -277,12 +277,14 @@ typedef struct {
 } httpContext;
 
 void
-httpContext_clear(httpContext* req) {
-	req->http_method[0] = 0;
-	req->endpoint[0] = 0;
-	req->http_version[0] = 0;
-	req->errmsg[0] = 0;
-	req->route = 0;
+httpContext_clear(httpContext* ctx) {
+	ctx->http_method[0] = 0;
+	ctx->endpoint[0] = 0;
+	ctx->http_version[0] = 0;
+	ctx->errmsg[0] = 0;
+	ctx->route = 0;
+	ctx->getP[0] = 0;
+	ctx->postP[0] = 0;
 }
 
 int // ok
@@ -449,6 +451,13 @@ sstr*
 tr_of_every_account() {
 	sstr *out = sstr_new(512);
 	char* temp;
+	char* acc_types[4] = {
+		"Income",
+		"Expense",
+		"Asset",
+		"Liability"
+	};
+
 	for (u16 i = 0; i < accLen; i++) {
 		auto acc = accs[i];
 		char* type = acc_types[acc.type];
@@ -548,7 +557,6 @@ ledger_newest_30_newstr() {
 
 char*
 account_selection_options_new() {
-
 	sstr* out = sstr_new(1024);
 	char* temp = calloc(1024, 1);
 	for (u16 i = 0; i < accLen; i++) {
@@ -654,6 +662,14 @@ createAccount(httpContext* request) {
 	}
 	u16 new_account_id = accLen + 1;
 	int type_i = atoi(type);
+	if ((type_i > LIABILITY) || (type_i < INCOME)) {
+		char* out;
+		asprintf(&out, "type_i=%d is invalid", type_i);
+		write_to_client(request, 422, out);
+		free(out);
+		free(name2);
+		return;
+	}
 	acc_append(new_account_id, name2, type_i);
 	acc_append_file(new_account_id, name2, type_i);
 
@@ -761,7 +777,7 @@ incomeStatement(httpContext* request) {
 	for (u16 i = 0; i < accLen; i++) {
 		auto acc = accs[i];
 		switch (acc.type) {
-			case 0: // Income
+			case INCOME:
 				tot = 0;
 				for (u16 i = 0; i < periodTxsLen; i++) {
 					auto tx = periodTxs[i];
@@ -791,7 +807,7 @@ incomeStatement(httpContext* request) {
 				incomeTrsLen += trLen;
 				break;
 
-			case 1: // Expense
+			case EXPENSE:
 				tot = 0;
 				for (u16 i = 0; i < periodTxsLen; i++) {
 					auto tx = periodTxs[i];
@@ -875,10 +891,10 @@ void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
 	for (u16 i = 0; i < accLen; i++) {
 		auto acc = accs[i];
 		switch (acc.type) {
-			case 2:
+			case ASSET:
 				bs_accs_append(assets, acc.id, acc.name);
 				break;
-			case 3:
+			case LIABILITY:
 				bs_accs_append(liabilities, acc.id, acc.name);
 				break;
 			default:
@@ -903,6 +919,7 @@ void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
 		auto tx = txs[i];
 		if (tx.created_at > stop) { continue; }
 
+		// TODO maybe bs_accs_a and bs_accs_l should be one array? Don't know. Pray on it.
 		auto* bsacc = bs_accs_find_by_id(bs_accs_a, tx.debit_account_id);
 		if (bsacc) {
 			bsacc->total += tx.amount;
@@ -936,11 +953,11 @@ bs_accs_trs_new(BsAccs* accs, uint8_t accType) {
 		}
 		u16 written = 100;
 		switch (accType) {
-			case 2:
+			case ASSET:
 				written = snprintf(out+outLen, 89,
 						"<tr><td>%s</td><td>%d</td><td></td></tr>\n", it.name, it.total);
 				break;
-			case 3:
+			case LIABILITY:
 				written = snprintf(out+outLen, 89,
 						"<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total);
 				break;
@@ -962,7 +979,6 @@ balanceSheet(httpContext* request) {
 	auto template = read_file_newstr("templates/balanceSheet.html");
 
 	printf("%s\n", request->getP);
-	// TODO clear ctx between requests coming into this thread with the persistent conn.
 	u16 month, year;
 	u32 start, stop;
 	char prevLink[12], nextLink[12];
