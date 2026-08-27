@@ -1192,10 +1192,6 @@ main(int argc, char** argv) {
 		req->postP = malloc(256);
 	}
 
-	// TODO Actually, since this is meant to be a local program, we don't really need multi-threading. That's
-	// just a cost for no benefit. It's a single-user program, and that user is a human. The slowest part is
-	// the human. If Redis can be single-threaded and work fine, we don't need multi-threading for this.
-	//
 	// Set up thread pool
 	// param pool_size uint
 	// param threadpool_worker func
