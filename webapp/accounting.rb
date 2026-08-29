@@ -72,6 +72,30 @@ def listLedger(client_socket, first_line)
 	write_to_client(client_socket, 200, body);
 end
 
+def tr_of_every_account
+	acc_types = %w[ Income Expense Asset Liability ]
+	out = ""
+	$accs.each { |acc|
+		type = acc_types[acc.type];
+		temp = sprintf(<<~TR, acc.id, acc.name, type)
+			<tr>
+			  <td>%d</td>
+			  <td>%s</td>
+			  <td>%s</td>
+			</tr>\n
+		TR
+		out << temp
+	}
+	out
+end
+
+def listAccounts(client_socket)
+	body = File.read("templates/listAccounts.html");
+	trs = tr_of_every_account();
+	a1 = sprintf(body, trs)
+	write_to_client(client_socket, 200, a1);
+end
+
 # Called with a fresh client_socket. Should loop through multiple requets over a persistent connection.
 # Output full response string.
 def route_request(client_socket)
@@ -122,6 +146,8 @@ def route_request(client_socket)
 	case endpoint2
 	when 1
 		listLedger(client_socket, first_line) # Doesn't need anything but the GET params
+	when 2
+		listAccounts(client_socket)
 		# router func
 		# parse GET
 		# parse POST
@@ -143,7 +169,7 @@ def handle_client_socket(client_socket)
 	loop do
 		out = route_request(client_socket)
 		client_socket.print(out)
-	rescue Errno::EPIPE, Errno::ECONNRESET
+	rescue Errno::EPIPE, Errno::ECONNRESET => e
 		p "Connection closed by peer. Not handling this socket anymore. e.msg=#{e.message}"
 		break
 	end
