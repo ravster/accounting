@@ -96,6 +96,112 @@ def listAccounts(client_socket)
 	write_to_client(client_socket, 200, a1);
 end
 
+def calc_month(getParams)
+	month = getParams['m']
+	year = getParams['y']
+	if (!month || !year)
+		t = Time.now
+		month = t.month
+		year = t.year
+	else
+		month = month.to_i
+		year = year.to_i
+	end
+
+	start = (year* 10000) + (month * 100) + 1
+	endMonth = month +1
+	endYear = year
+	if (endMonth == 13)
+		endMonth = 1
+		endYear += 1
+	end
+	stop = (endYear * 10000) + (endMonth * 100) + 1
+
+	prevYear = year
+	prevMonth = month -1
+	if prevMonth == 0
+		prevMonth = 12
+		prevYear -=1
+	end
+	prevLink = "m=#{prevMonth}&y=#{prevYear}"
+
+	nextYear = year
+	nextMonth = month +1
+	if (nextMonth == 13)
+		nextMonth = 1
+		nextYear +=1
+	end
+	nextLink = "m=#{nextMonth}&y=#{nextYear}"
+
+	[month, year, start, stop, prevLink, nextLink]
+end
+
+def calcGetParams(first_line)
+	url = first_line.match(/ \/\d+\?([^\s]+)/)
+	return({}) unless url
+	captures = url.captures
+	return({}) if captures.empty?
+	a1 = captures[0]
+	out = {}
+	a1.split("&").each { |pair|
+		k, v = pair.split("=")
+		out[k] = v
+	}
+	out
+end
+
+def incomeStatement(client_socket, first_line)
+	template = File.read("templates/incomeStatement.html");
+	getParams = calcGetParams(first_line)
+	month, year, start, stop, prevLink, nextLink = calc_month(getParams)
+	periodTxs = $txs.select { |tx| (tx.created >= start) && (tx.created < stop) }
+	incomeTrs = ""
+	expenseTrs = ""
+	netProfitDollars = 0.0
+	tot = 0.0
+
+	$accs.each { |acc|
+		case acc.type
+		when 0 # income
+			tot = 0.0
+			periodTxs.each { |tx|
+				next if (tx.credit != acc.id)
+				tot += tx.amount
+			}
+			netProfitDollars += tot
+			tr = sprintf(<<~TR, acc.name, tot)
+				<tr> <td>%s</td>
+				     <tx>%.2f</td>
+					 <td></td>
+				</tr>\n
+			TR
+			incomeTrs << tr
+		when 1 # expense
+			tot = 0.0
+			periodTxs.each { |tx|
+				next if (tx.debit != acc.id)
+				tot += tx.amount
+			}
+			netProfitDollars += tot
+
+			tr = sprintf(<<~TR, acc.name, tot)
+				<tr> <td>%s</td>
+					 <td></td>
+					 <td>%.2f</td>
+				</tr>\n
+			TR
+			expenseTrs << tr
+		else
+			next
+		end
+	}
+
+	trs = incomeTrs.concat(expenseTrs)
+
+	body = sprintf(template, prevLink, nextLink, trs, netProfitDollars)
+	write_to_client(client_socket, 200, body);
+end
+
 # Called with a fresh client_socket. Should loop through multiple requets over a persistent connection.
 # Output full response string.
 def route_request(client_socket)
@@ -148,6 +254,8 @@ def route_request(client_socket)
 		listLedger(client_socket, first_line) # Doesn't need anything but the GET params
 	when 2
 		listAccounts(client_socket)
+	when 5
+		incomeStatement(client_socket, first_line)
 		# router func
 		# parse GET
 		# parse POST
