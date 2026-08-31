@@ -6,6 +6,7 @@ $txs = []
 
 Acc = Struct.new(:id, :name, :type)
 Tx = Struct.new(:id, :amount, :note, :debit, :credit, :created)
+BsAcc = Struct.new(:id, :name, :total)
 
 def load_filedata(acc_path, tx_path)
 	File.foreach(acc_path) do |line|
@@ -202,6 +203,69 @@ def incomeStatement(client_socket, first_line)
 	write_to_client(client_socket, 200, body);
 end
 
+def bs_accs_populate_new
+	assets = []
+	liabilities = []
+	$accs.each { |acc|
+		case acc.type
+		when 2 # asset
+			assets << BsAcc.new(acc.id, acc.name, 0)
+		when 3 # liability
+			liabilities << BsAcc.new(acc.id, acc.name, 0)
+		else
+			next
+		end
+	}
+	[ assets, liabilities ]
+end
+
+def bs_accs_calc_totals(bsAssets, bsLiabilities, stop)
+	$txs.each { |tx|
+		next if tx.created > stop
+		bsAcc = bsAssets.find {|it| it.id == tx.debit }
+		if bsAcc # The current tx adds to an asset.
+			bsAcc.total += tx.amount
+		elsif (bsAcc = bsLiabilities.find {|it| it.id == tx.credit })
+			# The current tx adds to a liability.
+			bsAcc.total += tx.amount
+		end
+		bsAcc = bsAssets.find { |it| it.id == tx.credit }
+		if bsAcc # Current tx reduces asset.
+			bsAcc.total -= tx.amount
+		elsif (bsAcc = bsLiabilities.find { |it| it.id == tx.debit })
+			bsAcc.total -= tx.amount
+		end
+	}
+end
+
+def bs_accs_trs_new(bsAccs, accType)
+	out = ""
+	bsAccs.each { |it|
+		case accType
+		when 2
+			out << sprintf("<tr><td>%s</td><td>%d</td><td></td></tr>\n", it.name, it.total)
+		when 3
+			out << sprintf("<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total)
+		else
+			p "bs_accs_trs_new. Shouldn't have gotten to this else-branch. accType=#{accType}"
+		end
+	}
+	out
+end
+
+def balanceSheet(client_socket, first_line)
+	template = File.read("templates/balanceSheet.html");
+	getParams = calcGetParams(first_line)
+	month, year, start, stop, prevLink, nextLink = calc_month(getParams)
+	assets, liabilities = bs_accs_populate_new
+	bs_accs_calc_totals(assets, liabilities, stop);
+	trs_a = bs_accs_trs_new(assets, 2);
+	trs_l = bs_accs_trs_new(liabilities, 3);
+	body = sprintf(template, prevLink, nextLink, trs_a, trs_l)
+	write_to_client(client_socket, 200, body);
+end
+
+
 # Called with a fresh client_socket. Should loop through multiple requets over a persistent connection.
 # Output full response string.
 def route_request(client_socket)
@@ -256,6 +320,8 @@ def route_request(client_socket)
 		listAccounts(client_socket)
 	when 5
 		incomeStatement(client_socket, first_line)
+	when 6
+		balanceSheet(client_socket, first_line)
 		# router func
 		# parse GET
 		# parse POST
