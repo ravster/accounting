@@ -39,6 +39,7 @@ def acc_name(id)
 	$accs.find {|acc| acc.id == id }.name
 end
 
+# BEGIN 1 layer below the request handlers
 def ledger_newest_30_newstr
 	out = ""
 	$txs.each { |tx|
@@ -65,14 +66,6 @@ def write_to_client(client_socket, status, body)
 	client_socket.print(full_response)
 end
 
-def listLedger(client_socket, first_line)
-	template = File.read("templates/ledger.html")
-	ln30 = ledger_newest_30_newstr();
-	aso = account_selection_options_new();
-	body = sprintf(template, aso, aso, ln30)
-	write_to_client(client_socket, 200, body);
-end
-
 def tr_of_every_account
 	acc_types = %w[ Income Expense Asset Liability ]
 	out = ""
@@ -88,13 +81,6 @@ def tr_of_every_account
 		out << temp
 	}
 	out
-end
-
-def listAccounts(client_socket)
-	body = File.read("templates/listAccounts.html");
-	trs = tr_of_every_account();
-	a1 = sprintf(body, trs)
-	write_to_client(client_socket, 200, a1);
 end
 
 def calc_month(getParams)
@@ -151,6 +137,74 @@ def calcGetParams(first_line)
 	out
 end
 
+def bs_accs_populate_new
+	assets = []
+	liabilities = []
+	$accs.each { |acc|
+		case acc.type
+		when 2 # asset
+			assets << BsAcc.new(acc.id, acc.name, 0)
+		when 3 # liability
+			liabilities << BsAcc.new(acc.id, acc.name, 0)
+		else
+			next
+		end
+	}
+	[ assets, liabilities ]
+end
+
+def bs_accs_calc_totals(bsAssets, bsLiabilities, stop)
+	$txs.each { |tx|
+		next if tx.created > stop
+		bsAcc = bsAssets.find {|it| it.id == tx.debit }
+		if bsAcc # The current tx adds to an asset.
+			bsAcc.total += tx.amount
+		elsif (bsAcc = bsLiabilities.find {|it| it.id == tx.credit })
+			# The current tx adds to a liability.
+			bsAcc.total += tx.amount
+		end
+		bsAcc = bsAssets.find { |it| it.id == tx.credit }
+		if bsAcc # Current tx reduces asset.
+			bsAcc.total -= tx.amount
+		elsif (bsAcc = bsLiabilities.find { |it| it.id == tx.debit })
+			bsAcc.total -= tx.amount
+		end
+	}
+end
+
+def bs_accs_trs_new(bsAccs, accType)
+	out = ""
+	bsAccs.each { |it|
+		case accType
+		when 2
+			out << sprintf("<tr><td>%s</td><td>%d</td><td></td></tr>\n", it.name, it.total)
+		when 3
+			out << sprintf("<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total)
+		else
+			p "bs_accs_trs_new. Shouldn't have gotten to this else-branch. accType=#{accType}"
+		end
+	}
+	out
+end
+
+# END 1 layer below the request handlers
+
+# BEGIN handlers and router
+def listLedger(client_socket, first_line)
+	template = File.read("templates/ledger.html")
+	ln30 = ledger_newest_30_newstr();
+	aso = account_selection_options_new();
+	body = sprintf(template, aso, aso, ln30)
+	write_to_client(client_socket, 200, body);
+end
+
+def listAccounts(client_socket)
+	body = File.read("templates/listAccounts.html");
+	trs = tr_of_every_account();
+	a1 = sprintf(body, trs)
+	write_to_client(client_socket, 200, a1);
+end
+
 def incomeStatement(client_socket, first_line)
 	template = File.read("templates/incomeStatement.html");
 	getParams = calcGetParams(first_line)
@@ -203,56 +257,6 @@ def incomeStatement(client_socket, first_line)
 	write_to_client(client_socket, 200, body);
 end
 
-def bs_accs_populate_new
-	assets = []
-	liabilities = []
-	$accs.each { |acc|
-		case acc.type
-		when 2 # asset
-			assets << BsAcc.new(acc.id, acc.name, 0)
-		when 3 # liability
-			liabilities << BsAcc.new(acc.id, acc.name, 0)
-		else
-			next
-		end
-	}
-	[ assets, liabilities ]
-end
-
-def bs_accs_calc_totals(bsAssets, bsLiabilities, stop)
-	$txs.each { |tx|
-		next if tx.created > stop
-		bsAcc = bsAssets.find {|it| it.id == tx.debit }
-		if bsAcc # The current tx adds to an asset.
-			bsAcc.total += tx.amount
-		elsif (bsAcc = bsLiabilities.find {|it| it.id == tx.credit })
-			# The current tx adds to a liability.
-			bsAcc.total += tx.amount
-		end
-		bsAcc = bsAssets.find { |it| it.id == tx.credit }
-		if bsAcc # Current tx reduces asset.
-			bsAcc.total -= tx.amount
-		elsif (bsAcc = bsLiabilities.find { |it| it.id == tx.debit })
-			bsAcc.total -= tx.amount
-		end
-	}
-end
-
-def bs_accs_trs_new(bsAccs, accType)
-	out = ""
-	bsAccs.each { |it|
-		case accType
-		when 2
-			out << sprintf("<tr><td>%s</td><td>%d</td><td></td></tr>\n", it.name, it.total)
-		when 3
-			out << sprintf("<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total)
-		else
-			p "bs_accs_trs_new. Shouldn't have gotten to this else-branch. accType=#{accType}"
-		end
-	}
-	out
-end
-
 def balanceSheet(client_socket, first_line)
 	template = File.read("templates/balanceSheet.html");
 	getParams = calcGetParams(first_line)
@@ -264,7 +268,6 @@ def balanceSheet(client_socket, first_line)
 	body = sprintf(template, prevLink, nextLink, trs_a, trs_l)
 	write_to_client(client_socket, 200, body);
 end
-
 
 # Called with a fresh client_socket. Should loop through multiple requets over a persistent connection.
 # Output full response string.
@@ -339,6 +342,8 @@ rescue Errno::ECONNRESET
 	p "route_request. Connection reset."
 end
 
+# END handlers and router
+
 def handle_client_socket(client_socket)
 	loop do
 		out = route_request(client_socket)
@@ -353,13 +358,10 @@ def main(args)
 	dir = args[0]
 	account_file = File.read("#{dir}accounts.tsv")
 	tx_file = File.read("#{dir}transactions.tsv")
-
 	err = load_filedata("#{dir}accounts.tsv", "#{dir}transactions.tsv")
 	if err
 		exit(1)
 	end
-	p $accs, $txs
-
 	server = TCPServer.new("localhost", 3003)
 	loop do
 		Thread.start(server.accept) do |client_socket|
