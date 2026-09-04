@@ -214,7 +214,8 @@ def incomeStatement(client_socket, first_line)
 	expenseTrs = ""
 	netProfitDollars = 0.0
 	tot = 0.0
-
+	i_name_tot = []
+	e_name_tot = []
 	$accs.each { |acc|
 		case acc.type
 		when 0 # income
@@ -224,35 +225,40 @@ def incomeStatement(client_socket, first_line)
 				tot += tx.amount
 			}
 			netProfitDollars += tot
-			tr = sprintf(<<~TR, acc.name, tot)
-				<tr> <td>%s</td>
-				     <tx>%.2f</td>
-					 <td></td>
-				</tr>\n
-			TR
-			incomeTrs << tr
+			i_name_tot << [acc.name, tot]
 		when 1 # expense
 			tot = 0.0
 			periodTxs.each { |tx|
 				next if (tx.debit != acc.id)
 				tot += tx.amount
 			}
-			netProfitDollars += tot
-
-			tr = sprintf(<<~TR, acc.name, tot)
-				<tr> <td>%s</td>
-					 <td></td>
-					 <td>%.2f</td>
-				</tr>\n
-			TR
-			expenseTrs << tr
+			netProfitDollars -= tot
+			e_name_tot << [acc.name, tot]
 		else
 			next
 		end
 	}
-
+	i_name_tot.sort_by! { |_, tot| -tot }
+	e_name_tot.sort_by! { |_, tot| -tot }
+	i_name_tot.each { |name, tot|
+		tr = sprintf(<<~TR, name, tot)
+				<tr> <td>%s</td>
+					 <tx>%.2f</td>
+					 <td></td>
+				</tr>\n
+		TR
+		incomeTrs << tr
+	}
+	e_name_tot.each { |name, tot|
+		tr = sprintf(<<~TR, name, tot)
+				<tr> <td>%s</td>
+					 <td></td>
+					 <td>%.2f</td>
+				</tr>\n
+		TR
+		expenseTrs << tr
+	}
 	trs = incomeTrs.concat(expenseTrs)
-
 	body = sprintf(template, prevLink, nextLink, trs, netProfitDollars)
 	write_to_client(client_socket, 200, body);
 end

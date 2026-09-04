@@ -27,6 +27,13 @@
 typedef uint16_t u16;
 typedef uint32_t u32;
 
+// Basic struct used for random multiple things.
+typedef struct {
+	char* name;
+	int int1;
+	float total;
+} StrInt;
+
 // Globals so many functions can write to this.
 FILE *account_file, *tx_file;
 typedef struct {
@@ -740,6 +747,45 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* n
 	snprintf(nextLink, 12, "m=%hu&y=%hu", nextMonth, nextYear);
 }
 
+char*
+incomeStatementTrsNew(StrInt* strints, int accType) {
+	auto len = strints[0].int1;
+	u16 outLen = 0; u16 outCap = 2048; char* out = calloc(2048, 1);
+	char tr[128];
+	char* trTemplate;
+	switch (accType) {
+		case 2:
+			trTemplate = "<tr> <td>%s</td> <td>%.2f</td> <td></td> </tr>\n";
+			break;
+		case 1:
+			trTemplate = "<tr> <td>%s</td> <td></td> <td>%.2f</td> </tr>\n";
+			break;
+	}
+	for (int i = 1; i<= len; i++) {
+		auto it = strints[i];
+		auto trLen = snprintf(tr, 128, trTemplate, it.name, it.total);
+		if (trLen >=128) {
+			printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
+					it.name, it.total);
+			trLen--; // For the benefit of memcpy below;
+		}
+		if (1+ outLen + trLen > outCap) {
+			outCap *= 2;
+			out = realloc(out, outCap);
+		}
+		memcpy(out + outLen, tr, trLen + 1);
+		outLen += trLen;
+	}
+	return out;
+}
+
+int
+compare_strint_desc(const void* a, const void* b) {
+	auto sa = (StrInt*)a;
+	auto sb = (StrInt*)b;
+	return sb->total - sa->total;
+}
+
 void
 incomeStatement(httpContext* request) {
 	auto template = read_file_newstr("templates/incomeStatement.html");
@@ -748,11 +794,7 @@ incomeStatement(httpContext* request) {
 	u32 start, stop;
 	char prevLink[12], nextLink[12];
 	calc_month(&month, &year, &start, &stop, prevLink, nextLink, request->getP);
-
 	char* body;
-
-	char tr[512];
-	u16 trLen = 0;
 	float netProfitDollars = 0;
 
 	// List of Tx that are in the time period.
@@ -770,9 +812,12 @@ incomeStatement(httpContext* request) {
 		periodTxsLen++;
 	}
 
-	u16 incomeTrsLen = 0; u16 incomeTrsCap = 1024; char* incomeTrs = calloc(incomeTrsCap, 1);
-	u16 expenseTrsLen = 0; u16 expenseTrsCap = 1024; char* expenseTrs = calloc(expenseTrsCap, 1);
 	float tot = 0;
+	StrInt* incomeAccs = calloc(accLen, sizeof(StrInt));
+	incomeAccs[0].total = 0; // Use this as array length
+	StrInt* expenseAccs = calloc(accLen, sizeof(StrInt));
+	expenseAccs[0].total = 0; // Use this as array length
+	StrInt* newStrInt;
 
 	for (u16 i = 0; i < accLen; i++) {
 		auto acc = accs[i];
@@ -785,28 +830,12 @@ incomeStatement(httpContext* request) {
 					tot += tx.amount;
 				}
 				netProfitDollars += tot;
-
-				// write to incomeTrs
-				trLen = snprintf(tr, 512,
-						"<tr>"
-						"<td>%s</td>"
-						"<td>%.2f</td>"
-						"<td></td>"
-						"</tr>\n",
-						acc.name, tot);
-				if (trLen >=512) {
-					printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
-							acc.name, tot);
-					trLen--; // For the benefit of memcpy below;
-				}
-				if (1+ incomeTrsLen + trLen > incomeTrsCap) {
-					incomeTrsCap *= 2;
-					incomeTrs = realloc(incomeTrs, incomeTrsCap);
-				}
-				memcpy(incomeTrs + incomeTrsLen, tr, trLen + 1);
-				incomeTrsLen += trLen;
+				auto iaLen = incomeAccs[0].int1;
+				newStrInt = &incomeAccs[iaLen+1];
+				newStrInt->name = strdup(acc.name);
+				newStrInt->total = tot;
+				incomeAccs[0].int1++;
 				break;
-
 			case EXPENSE:
 				tot = 0;
 				for (u16 i = 0; i < periodTxsLen; i++) {
@@ -815,42 +844,34 @@ incomeStatement(httpContext* request) {
 					tot += tx.amount;
 				}
 				netProfitDollars -= tot;
-
-				// write to expenseTrs
-				trLen = snprintf(tr, 512,
-						"<tr>"
-						"<td>%s</td>"
-						"<td></td>"
-						"<td>%.2f</td>"
-						"</tr>\n",
-						acc.name, tot);
-				if (trLen >=512) {
-					printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
-							acc.name, tot);
-					trLen--; // For the benefit of memcpy below;
-				}
-				if (1+ expenseTrsLen + trLen > expenseTrsCap) {
-					expenseTrsCap *= 2;
-					expenseTrs = realloc(expenseTrs, expenseTrsCap);
-				}
-				memcpy(expenseTrs + expenseTrsLen, tr, trLen + 1);
-				expenseTrsLen += trLen;
+				auto eaLen = expenseAccs[0].int1;
+				newStrInt = &expenseAccs[eaLen+1];
+				newStrInt->name = strdup(acc.name);
+				newStrInt->total = tot;
+				expenseAccs[0].int1++;
 				break;
-
 			default:
 				continue;
 		}
 	}
 
-	char* trs = calloc(incomeTrsLen + expenseTrsLen + 1, 1);
-	memcpy(trs, incomeTrs, incomeTrsLen + 1);
-	memcpy(trs + incomeTrsLen, expenseTrs, expenseTrsLen + 1);
+	// Got to start from the idx-1 because idx0 is a sentinel that only has the counts. Yeah, this
+	// makes sorting a bit wonky.
+	qsort(incomeAccs+1, incomeAccs[0].int1, sizeof(StrInt), compare_strint_desc);
+	qsort(expenseAccs+1, expenseAccs[0].int1, sizeof(StrInt), compare_strint_desc);
+
+	auto itrs = incomeStatementTrsNew(incomeAccs, INCOME);
+	auto etrs = incomeStatementTrsNew(expenseAccs, EXPENSE);
+	auto itrlen = strlen(itrs);
+	auto etrlen = strlen(etrs);
+
+	char* trs = calloc(itrlen + etrlen + 1, 1);
+	memcpy(trs, itrs, itrlen + 1);
+	memcpy(trs + itrlen, etrs, etrlen + 1);
 
 	asprintf(&body, template, prevLink, nextLink, trs, netProfitDollars);
 	write_to_client(request, 200, body);
-	free(trs);
-	free(expenseTrs);
-	free(incomeTrs);
+	free(itrs); free(etrs); free(trs);
 	free(periodTxs);
 	free(body);
 	free(template);
