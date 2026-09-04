@@ -322,17 +322,20 @@ fillPostParams(httpContext* req) {
 httpContext requests[4];
 // END httpContext object.
 
-// Have to loop because "write" isn't guaranteed to do it all in one syscall. It tells us how much it did.
-int // ok
+int // err
 write_all(int socket, char* buffer, size_t len) {
 	char* ptr = buffer;
-	u16 written = 0;
+	size_t written = 0;
 	while (written < len) {
-		ssize_t just_wrote = write(socket, ptr, len-written);
+		auto just_wrote = write(socket, ptr, len - written);
+		if (just_wrote < 1) {
+			printf("write_all. Failed. just_wrote=%zd\n", just_wrote);
+			return 1;
+		}
 		written += just_wrote;
+		ptr += just_wrote;
 	}
-	printf("metric_response_size:%lu\n", len);
-	return 1;
+	return 0;
 }
 
 int // ok
@@ -355,10 +358,7 @@ void
 write_to_client(httpContext* req, int httpStatus, char* body) {
 	char* a1;
 	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
-		httpStatus,
-		strlen(body),
-		body
-	);
+		httpStatus, strlen(body), body);
 	write_all(req->client_socket, a1, strlen(a1));
 	free(a1);
 }
@@ -366,68 +366,10 @@ write_to_client(httpContext* req, int httpStatus, char* body) {
 void
 write_redirect(httpContext* req, int httpStatus, char* newLocation) {
 	char* a1;
-	// TODO stop closing the connection. I want the handler threads to support HTTP1.1 persistentConns.
 	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: 0\r\nLocation: %s\r\n\r\n",
-		httpStatus,
-		newLocation
-	);
+		httpStatus, newLocation);
 	write_all(req->client_socket, a1, strlen(a1));
 	free(a1);
-}
-
-// This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
-int // OK
-parse_request(httpContext* request) {
-	char* buf = request->request_buf;
-
-	// Get first line. Max 512B.
-	char* line_end = strstr(buf, "\r\n");
-	if (line_end == NULL) {
-		write_to_client(request, 422, "Couldn't identify the first header. Fix your request.");
-		return 0;
-	}
-	size_t line_len = line_end - buf;
-	if (line_len > 512) {
-		write_to_client(request, 413, "Request endpoint too large. We aren't parsing over 512B.");
-		return 0;
-	}
-
-	char* first_line = calloc(1, 512);
-	strncpy(first_line, buf, line_len);
-	printf("first_line:%s\n", first_line);
-	char* http_method = request->http_method;
-	char* endpoint = request->endpoint;
-	char* http_version = request->http_version;
-	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
-	if (sscanf_result != 3) {
-		write_to_client(request, 422, "Failed to parse HTTP line 1. Fix your request.");
-		free(first_line);
-		return 0;
-	}
-
-	int ok = parse_route(&request->route, endpoint);
-	if (!ok) {
-		write_to_client(request, 404, "Couldn't parse route from endpoint.");
-		free(first_line);
-		return 0;
-	}
-
-	ok = fillGetParams(request);
-	if (!ok) {
-		write_to_client(request, 422, "Couldn't parse GET params.");
-		free(first_line);
-		return 0;
-	}
-
-	ok = fillPostParams(request);
-	if (!ok) {
-		write_to_client(request, 422, "Couldn't parse POST params.");
-		free(first_line);
-		return 0;
-	}
-
-	free(first_line);
-	return 1;
 }
 
 char*
@@ -447,12 +389,7 @@ read_file_newstr(char* path) {
 	return buf;
 }
 
-void
-homePage(httpContext* request) {
-	char* body = read_file_newstr("templates/home.html");
-	write_to_client(request, 200, body);
-	free(body);
-}
+// BEGIN Layer below request handlers.
 
 sstr*
 tr_of_every_account() {
@@ -482,18 +419,6 @@ tr_of_every_account() {
 		free(temp);
 	}
 	return out;
-}
-
-void
-listAccounts(httpContext* request) {
-	char* body = read_file_newstr("templates/listAccounts.html");
-	char* a1;
-	sstr* trs = tr_of_every_account();
-	asprintf(&a1, body, trs->buf);
-	write_to_client(request, 200, a1);
-	sstr_free(trs);
-	free(a1);
-	free(body);
 }
 
 char* account_name_from_id_;
@@ -584,20 +509,6 @@ account_selection_options_new() {
 	return out2;
 }
 
-void
-listLedger(httpContext* request) {
-	char* body = read_file_newstr("templates/ledger.html");
-	char* a1;
-	sstr* ln30 = ledger_newest_30_newstr();
-	char* aso = account_selection_options_new();
-	asprintf(&a1, body, aso, aso, ln30->buf);
-	write_to_client(request, 200, a1);
-	sstr_free(ln30);
-	free(aso);
-	free(a1);
-	free(body);
-}
-
 // Helper to convert a single hex character to its integer value
 static char hex_to_val(char ch) {
     if (ch >= '0' && ch <= '9') return ch - '0';
@@ -635,82 +546,6 @@ void url_decode(char* str) {
     }
     // Explicitly place a fresh null-terminator at our new shorter boundary
     *writer = '\0';
-}
-
-void
-testPost(httpContext* req) {
-	char* a1;
-	char* bigText = params_get_newstr(req->postP, "note");
-	char* a2 = strdup(bigText);
-	url_decode(a2);
-	asprintf(&a1, "<p>got this:%s</p> <p>After url-decoding it is:%s</p>", bigText, a2);
-	write_to_client(req, 200, a1);
-	free(a1);
-}
-
-void
-createAccount(httpContext* request) {
-	char* name = params_get_newstr(request->postP, "name");
-	char* type = params_get_newstr(request->postP, "type");
-	if ((name == NULL) || (type == NULL)) {
-		write_to_client(request, 422, "Param 'name' or 'type' is missing");
-		return;
-	}
-	char* name2 = strdup(name);
-	url_decode(name2);
-
-	int is_name_found = acc_find_name(name2);
-	if (is_name_found) {
-		char* out;
-		asprintf(&out, "The account name:%s is already taken.", name2);
-		write_to_client(request, 422, out);
-		free(out);
-		return;
-	}
-	u16 new_account_id = accLen + 1;
-	int type_i = atoi(type);
-	if ((type_i > LIABILITY) || (type_i < INCOME)) {
-		char* out;
-		asprintf(&out, "type_i=%d is invalid", type_i);
-		write_to_client(request, 422, out);
-		free(out);
-		free(name2);
-		return;
-	}
-	acc_append(new_account_id, name2, type_i);
-	acc_append_file(new_account_id, name2, type_i);
-
-	free(name2);
-	write_redirect(request, 303, "/2");
-	return;
-}
-
-void
-createLedgerEntry(httpContext* request) {
-	char* debitID = params_get_newstr(request->postP, "debit_account_id");
-	char* creditID = params_get_newstr(request->postP, "credit_account_id");
-	char* note = params_get_newstr(request->postP, "note");
-	url_decode(note);
-	char* amount = params_get_newstr(request->postP, "amount");
-	if ((debitID == NULL) || (creditID == NULL) || (note == NULL) || (amount == NULL)) {
-		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
-		return;
-	}
-
-	// TODO Check debit and credit id map to actual accounts
-
-	Tx* lastTx = &txs[txLen - 1];
-	u16 newId = lastTx->id + 1;
-	time_t t1 = time(NULL);
-	struct tm* t2 = localtime(&t1);
-	char timeBuf[9];
-	strftime(timeBuf, 9, "%Y%m%d", t2);
-
-	auto newTx = tx_append(newId, atof(amount), note, atoi(debitID), atoi(creditID), atoi(timeBuf));
-	tx_append_to_file(newTx);
-
-	write_redirect(request, 303, "/1");
-	return;
 }
 
 void
@@ -784,97 +619,6 @@ compare_strint_desc(const void* a, const void* b) {
 	auto sa = (StrInt*)a;
 	auto sb = (StrInt*)b;
 	return sb->total - sa->total;
-}
-
-void
-incomeStatement(httpContext* request) {
-	auto template = read_file_newstr("templates/incomeStatement.html");
-
-	u16 month, year;
-	u32 start, stop;
-	char prevLink[12], nextLink[12];
-	calc_month(&month, &year, &start, &stop, prevLink, nextLink, request->getP);
-	char* body;
-	float netProfitDollars = 0;
-
-	// List of Tx that are in the time period.
-	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
-	for (u16 i = 0; i < txLen; i++) {
-		auto tx = txs[i];
-		if ((tx.created_at < start) || (tx.created_at >= stop)) {
-			continue;
-		}
-		if (periodTxsLen == periodTxsCap) {
-			periodTxsCap *=2;
-			periodTxs = realloc(periodTxs, periodTxsCap * sizeof(Tx));
-		}
-		periodTxs[periodTxsLen] = tx;
-		periodTxsLen++;
-	}
-
-	float tot = 0;
-	StrInt* incomeAccs = calloc(accLen, sizeof(StrInt));
-	incomeAccs[0].total = 0; // Use this as array length
-	StrInt* expenseAccs = calloc(accLen, sizeof(StrInt));
-	expenseAccs[0].total = 0; // Use this as array length
-	StrInt* newStrInt;
-
-	for (u16 i = 0; i < accLen; i++) {
-		auto acc = accs[i];
-		switch (acc.type) {
-			case INCOME:
-				tot = 0;
-				for (u16 i = 0; i < periodTxsLen; i++) {
-					auto tx = periodTxs[i];
-					if (tx.credit_account_id != acc.id) { continue; }
-					tot += tx.amount;
-				}
-				netProfitDollars += tot;
-				auto iaLen = incomeAccs[0].int1;
-				newStrInt = &incomeAccs[iaLen+1];
-				newStrInt->name = strdup(acc.name);
-				newStrInt->total = tot;
-				incomeAccs[0].int1++;
-				break;
-			case EXPENSE:
-				tot = 0;
-				for (u16 i = 0; i < periodTxsLen; i++) {
-					auto tx = periodTxs[i];
-					if (tx.debit_account_id != acc.id) { continue; }
-					tot += tx.amount;
-				}
-				netProfitDollars -= tot;
-				auto eaLen = expenseAccs[0].int1;
-				newStrInt = &expenseAccs[eaLen+1];
-				newStrInt->name = strdup(acc.name);
-				newStrInt->total = tot;
-				expenseAccs[0].int1++;
-				break;
-			default:
-				continue;
-		}
-	}
-
-	// Got to start from the idx-1 because idx0 is a sentinel that only has the counts. Yeah, this
-	// makes sorting a bit wonky.
-	qsort(incomeAccs+1, incomeAccs[0].int1, sizeof(StrInt), compare_strint_desc);
-	qsort(expenseAccs+1, expenseAccs[0].int1, sizeof(StrInt), compare_strint_desc);
-
-	auto itrs = incomeStatementTrsNew(incomeAccs, INCOME);
-	auto etrs = incomeStatementTrsNew(expenseAccs, EXPENSE);
-	auto itrlen = strlen(itrs);
-	auto etrlen = strlen(etrs);
-
-	char* trs = calloc(itrlen + etrlen + 1, 1);
-	memcpy(trs, itrs, itrlen + 1);
-	memcpy(trs + itrlen, etrs, etrlen + 1);
-
-	asprintf(&body, template, prevLink, nextLink, trs, netProfitDollars);
-	write_to_client(request, 200, body);
-	free(itrs); free(etrs); free(trs);
-	free(periodTxs);
-	free(body);
-	free(template);
 }
 
 typedef struct {
@@ -995,33 +739,281 @@ bs_accs_trs_new(BsAccs* accs, uint8_t accType) {
 	return out;
 }
 
-void
-balanceSheet(httpContext* request) {
-	auto template = read_file_newstr("templates/balanceSheet.html");
+// END Layer below request handlers.
 
-	printf("%s\n", request->getP);
+void
+incomeStatement(httpContext* request) {
+	auto template = read_file_newstr("templates/incomeStatement.html");
+
 	u16 month, year;
 	u32 start, stop;
 	char prevLink[12], nextLink[12];
 	calc_month(&month, &year, &start, &stop, prevLink, nextLink, request->getP);
-
 	char* body;
+	float netProfitDollars = 0;
 
+	// List of Tx that are in the time period.
+	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
+	for (u16 i = 0; i < txLen; i++) {
+		auto tx = txs[i];
+		if ((tx.created_at < start) || (tx.created_at >= stop)) {
+			continue;
+		}
+		if (periodTxsLen == periodTxsCap) {
+			periodTxsCap *=2;
+			periodTxs = realloc(periodTxs, periodTxsCap * sizeof(Tx));
+		}
+		periodTxs[periodTxsLen] = tx;
+		periodTxsLen++;
+	}
+
+	float tot = 0;
+	StrInt* incomeAccs = calloc(accLen, sizeof(StrInt));
+	incomeAccs[0].total = 0; // Use this as array length
+	StrInt* expenseAccs = calloc(accLen, sizeof(StrInt));
+	expenseAccs[0].total = 0; // Use this as array length
+	StrInt* newStrInt;
+
+	for (u16 i = 0; i < accLen; i++) {
+		auto acc = accs[i];
+		switch (acc.type) {
+			case INCOME:
+				tot = 0;
+				for (u16 i = 0; i < periodTxsLen; i++) {
+					auto tx = periodTxs[i];
+					if (tx.credit_account_id != acc.id) { continue; }
+					tot += tx.amount;
+				}
+				netProfitDollars += tot;
+				auto iaLen = incomeAccs[0].int1;
+				newStrInt = &incomeAccs[iaLen+1];
+				newStrInt->name = strdup(acc.name);
+				newStrInt->total = tot;
+				incomeAccs[0].int1++;
+				break;
+			case EXPENSE:
+				tot = 0;
+				for (u16 i = 0; i < periodTxsLen; i++) {
+					auto tx = periodTxs[i];
+					if (tx.debit_account_id != acc.id) { continue; }
+					tot += tx.amount;
+				}
+				netProfitDollars -= tot;
+				auto eaLen = expenseAccs[0].int1;
+				newStrInt = &expenseAccs[eaLen+1];
+				newStrInt->name = strdup(acc.name);
+				newStrInt->total = tot;
+				expenseAccs[0].int1++;
+				break;
+			default:
+				continue;
+		}
+	}
+
+	// Got to start from the idx-1 because idx0 is a sentinel that only has the counts. Yeah, this
+	// makes sorting a bit wonky.
+	qsort(incomeAccs+1, incomeAccs[0].int1, sizeof(StrInt), compare_strint_desc);
+	qsort(expenseAccs+1, expenseAccs[0].int1, sizeof(StrInt), compare_strint_desc);
+
+	auto itrs = incomeStatementTrsNew(incomeAccs, INCOME);
+	auto etrs = incomeStatementTrsNew(expenseAccs, EXPENSE);
+	auto itrlen = strlen(itrs);
+	auto etrlen = strlen(etrs);
+
+	char* trs = calloc(itrlen + etrlen + 1, 1);
+	memcpy(trs, itrs, itrlen + 1);
+	memcpy(trs + itrlen, etrs, etrlen + 1);
+
+	asprintf(&body, template, prevLink, nextLink, trs, netProfitDollars);
+	write_to_client(request, 200, body);
+	free(itrs); free(etrs); free(trs);
+	free(periodTxs);
+	free(body);
+	free(template);
+}
+
+void
+createLedgerEntry(httpContext* request) {
+	char* debitID = params_get_newstr(request->postP, "debit_account_id");
+	char* creditID = params_get_newstr(request->postP, "credit_account_id");
+	char* note = params_get_newstr(request->postP, "note");
+	url_decode(note);
+	char* amount = params_get_newstr(request->postP, "amount");
+	if ((debitID == NULL) || (creditID == NULL) || (note == NULL) || (amount == NULL)) {
+		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
+		free(debitID); free(creditID); free(note); free(amount);
+		return;
+	}
+	// TODO Check debit and credit id map to actual accounts
+	Tx* lastTx = &txs[txLen - 1];
+	u16 newId = lastTx->id + 1;
+	time_t t1 = time(NULL);
+	struct tm* t2 = localtime(&t1);
+	char timeBuf[9];
+	strftime(timeBuf, 9, "%Y%m%d", t2);
+	auto newTx = tx_append(newId, atof(amount), note, atoi(debitID), atoi(creditID), atoi(timeBuf));
+	tx_append_to_file(newTx);
+	write_redirect(request, 303, "/1");
+	free(debitID); free(creditID); free(note); free(amount);
+	return;
+}
+
+void
+createAccount(httpContext* request) {
+	char* name = params_get_newstr(request->postP, "name");
+	char* type = params_get_newstr(request->postP, "type");
+	if ((name == NULL) || (type == NULL)) {
+		write_to_client(request, 422, "Param 'name' or 'type' is missing");
+		free(name); free(type);
+		return;
+	}
+	char* name2 = strdup(name);
+	url_decode(name2);
+	int is_name_found = acc_find_name(name2);
+	if (is_name_found) {
+		char* out;
+		asprintf(&out, "The account name:%s is already taken.", name2);
+		write_to_client(request, 422, out);
+		free(out); free(name2); free(name); free(type);
+		return;
+	}
+	u16 new_account_id = accLen + 1;
+	int type_i = atoi(type);
+	if ((type_i > LIABILITY) || (type_i < INCOME)) {
+		char* out;
+		asprintf(&out, "type_i=%d is invalid", type_i);
+		write_to_client(request, 422, out);
+		free(out); free(name2); free(name); free(type);
+		return;
+	}
+	acc_append(new_account_id, name2, type_i);
+	acc_append_file(new_account_id, name2, type_i);
+	write_redirect(request, 303, "/2");
+	free(name2); free(name); free(type);
+	return;
+}
+
+void
+testPost(httpContext* req) {
+	char* a1;
+	char* bigText = params_get_newstr(req->postP, "note");
+	char* a2 = strdup(bigText);
+	url_decode(a2);
+	asprintf(&a1, "<p>got this:%s</p> <p>After url-decoding it is:%s</p>", bigText, a2);
+	write_to_client(req, 200, a1);
+	free(a1);
+}
+
+void
+listLedger(httpContext* request) {
+	char* body = read_file_newstr("templates/ledger.html");
+	char* a1;
+	sstr* ln30 = ledger_newest_30_newstr();
+	char* aso = account_selection_options_new();
+	asprintf(&a1, body, aso, aso, ln30->buf);
+	write_to_client(request, 200, a1);
+	sstr_free(ln30);
+	free(aso);
+	free(a1);
+	free(body);
+}
+
+void
+listAccounts(httpContext* request) {
+	char* body = read_file_newstr("templates/listAccounts.html");
+	char* a1;
+	sstr* trs = tr_of_every_account();
+	asprintf(&a1, body, trs->buf);
+	write_to_client(request, 200, a1);
+	sstr_free(trs);
+	free(a1);
+	free(body);
+}
+
+void
+homePage(httpContext* request) {
+	char* body = read_file_newstr("templates/home.html");
+	write_to_client(request, 200, body);
+	free(body);
+}
+
+void
+balanceSheet(httpContext* request) {
+	auto template = read_file_newstr("templates/balanceSheet.html");
+	u16 month, year;
+	u32 start, stop;
+	char prevLink[12], nextLink[12];
+	calc_month(&month, &year, &start, &stop, prevLink, nextLink, request->getP);
+	char* body;
 	auto bs_accs_a = bs_accs_new();
 	auto bs_accs_l = bs_accs_new();
 	bs_accs_populate_new(bs_accs_a, bs_accs_l); // Asset, Liability
 	bs_accs_calc_totals(bs_accs_a, bs_accs_l, stop);
 	auto trs_a = bs_accs_trs_new(bs_accs_a, 2);
 	auto trs_l = bs_accs_trs_new(bs_accs_l, 3);
-	free(bs_accs_a);
-	free(bs_accs_l);
-
 	asprintf(&body, template, prevLink, nextLink, trs_a, trs_l);
 	write_to_client(request, 200, body);
+	free(bs_accs_a);
+	free(bs_accs_l);
 	free(body);
 	free(trs_a);
 	free(trs_l);
 	free(template);
+}
+
+// This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
+int // OK
+parse_request(httpContext* request) {
+	char* buf = request->request_buf;
+
+	// Get first line. Max 512B.
+	char* line_end = strstr(buf, "\r\n");
+	if (line_end == NULL) {
+		write_to_client(request, 422, "Couldn't identify the first header. Fix your request.");
+		return 0;
+	}
+	size_t line_len = line_end - buf;
+	if (line_len > 512) {
+		write_to_client(request, 413, "Request endpoint too large. We aren't parsing over 512B.");
+		return 0;
+	}
+
+	char* first_line = calloc(1, 512);
+	strncpy(first_line, buf, line_len);
+	printf("first_line:%s\n", first_line);
+	char* http_method = request->http_method;
+	char* endpoint = request->endpoint;
+	char* http_version = request->http_version;
+	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
+	if (sscanf_result != 3) {
+		write_to_client(request, 422, "Failed to parse HTTP line 1. Fix your request.");
+		free(first_line);
+		return 0;
+	}
+
+	int ok = parse_route(&request->route, endpoint);
+	if (!ok) {
+		write_to_client(request, 404, "Couldn't parse route from endpoint.");
+		free(first_line);
+		return 0;
+	}
+
+	ok = fillGetParams(request);
+	if (!ok) {
+		write_to_client(request, 422, "Couldn't parse GET params.");
+		free(first_line);
+		return 0;
+	}
+
+	ok = fillPostParams(request);
+	if (!ok) {
+		write_to_client(request, 422, "Couldn't parse POST params.");
+		free(first_line);
+		return 0;
+	}
+
+	free(first_line);
+	return 1;
 }
 
 // This function is called from a threadpool worker, to handle the request.
