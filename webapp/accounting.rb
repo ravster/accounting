@@ -1,4 +1,5 @@
 require 'socket'
+require 'cgi'
 require "debug"
 
 $accs = []
@@ -7,6 +8,20 @@ $txs = []
 Acc = Struct.new(:id, :name, :type)
 Tx = Struct.new(:id, :amount, :note, :debit, :credit, :created)
 BsAcc = Struct.new(:id, :name, :total)
+
+def append_to_file(input)
+	case input
+	when Acc
+		File.open($acc_path, "a") { |f|
+			f.printf("%d\t%s\t%d\n", input.id, input.name, input.type)
+		}
+	when Tx
+		File.open($tx_path, "a") { |f|
+			f.printf("%d\t%.2f\t%s\t%d\t%d\t%d\n",
+					 input.id, input.amount, input.note, input.debit, input.credit, input.created)
+		}
+	end
+end
 
 def load_filedata(acc_path, tx_path)
 	File.foreach(acc_path) do |line|
@@ -45,7 +60,6 @@ def ledger_newest_30_newstr
 	$txs.each { |tx|
 		debit_name = acc_name(tx.debit)
 		credit_name = acc_name(tx.credit)
-		p debit_name, credit_name, "z1"
 		tr = "<tr> <td>#{tx.id}</td> <td>#{tx.created}</td> <td>#{debit_name}</td> <td>#{credit_name}</td> <td>#{tx.note}</td> <td>#{tx.amount}</td> </tr>"
 		out << tr
 	}
@@ -64,6 +78,12 @@ def write_to_client(client_socket, status, body)
 	full_response = sprintf("HTTP/1.1 %d \r\nContent-Length: %d\r\n\r\n%s",
 		status, body.size, body)
 	client_socket.print(full_response)
+end
+
+def write_redirect(client_socket, status, newLoc)
+	response = sprintf("HTTP/1.1 %d \r\nContent-Length: 0\r\nLocation: %s\r\n\r\n",
+		status, newLoc);
+	client_socket.print(response)
 end
 
 def tr_of_every_account
@@ -187,6 +207,14 @@ def bs_accs_trs_new(bsAccs, accType)
 	out
 end
 
+def postParams(body)
+	out = {}
+	body.split("&").each { |kv|
+		k, v = kv.split("=")
+		out[k] = v
+	}
+	out
+end
 # END 1 layer below the request handlers
 
 # BEGIN handlers and router
@@ -275,6 +303,53 @@ def balanceSheet(client_socket, first_line)
 	write_to_client(client_socket, 200, body);
 end
 
+def createAccount(client_socket, body)
+	params = postParams(body)
+	name = params["name"]
+	type = params["type"]
+	if (name.empty? || type.empty?)
+		write_to_client(client_socket, 422, "Param 'name' or 'type' is missing")
+		return
+	end
+	name2 = CGI.unescape(name)
+	found = $accs.find { |it| it.name == name2 }
+	if found
+		write_to_client(client_socket, 422, "The account name='#{found.name}' is already taken.")
+		return
+	end
+	newAccountId = $accs.size + 1
+	type2 = type.to_i
+	if ((type2 > 3) || (type2 < 0))
+		write_to_client(client_socket, 422, "type=#{type2} is invalid")
+		return
+	end
+	newAcc = Acc.new(newAccountId, name2, type2)
+	$accs << newAcc
+	append_to_file(newAcc)
+	write_redirect(client_socket, 303, "/2")
+end
+
+def createLedgerEntry(client_socket, body)
+	params = postParams(body)
+	debitID = params["debit_account_id"]
+	creditID = params["credit_account_id"]
+	note = params["note"]
+	note = CGI.unescape(note)
+	amount = params["amount"]
+	if (debitID.empty? || creditID.empty? || note.empty? || amount.empty?)
+		write_to_client(client_socket, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
+		return;
+	end
+	# TODO Check debit and credit id map to actual accounts
+	lastTx = $txs.last
+	newId = lastTx.id + 1
+	now = Time.now.strftime("%Y%m%d")
+	newTx = Tx.new(newId, amount.to_f, note, debitID.to_i, creditID.to_i, now.to_i)
+	$txs << newTx
+	append_to_file(newTx)
+	write_redirect(client_socket, 303, "/1");
+end
+
 # Called with a fresh client_socket. Should loop through multiple requets over a persistent connection.
 # Output full response string.
 def route_request(client_socket)
@@ -299,6 +374,7 @@ def route_request(client_socket)
 	end
 
 	body = ""
+	content_length = content_length.to_i
 	if content_length > 0
 		if content_length > 2048
 			msg = "Request body to large. Must be <2048 bytes."
@@ -309,24 +385,24 @@ def route_request(client_socket)
 	end
 
 	first_line = headers[0]
-	p first_line, "first_line"
 	match = first_line.match(/\w+\s+([^\s]+)/)
 	endpoint = match.captures[0]
-	p endpoint, "endpoint"
 	found = endpoint.match(/\/(\d+)/)
 	unless found
 		msg = "Not found."
 		out = "HTTP/1.1 401\r\nContent-Type:text/plain\r\nContent-Length:#{msg.size}\r\n\r\n#{msg}"
 		return out
 	end
-	p found, "found"
 	endpoint2 = found.captures[0].to_i
-	p endpoint2, "endpoint2"
 	case endpoint2
 	when 1
 		listLedger(client_socket, first_line) # Doesn't need anything but the GET params
 	when 2
 		listAccounts(client_socket)
+	when 3
+		createAccount(client_socket, body)
+	when 4
+		createLedgerEntry(client_socket, body)
 	when 5
 		incomeStatement(client_socket, first_line)
 	when 6
@@ -362,9 +438,9 @@ end
 
 def main(args)
 	dir = args[0]
-	account_file = File.read("#{dir}accounts.tsv")
-	tx_file = File.read("#{dir}transactions.tsv")
-	err = load_filedata("#{dir}accounts.tsv", "#{dir}transactions.tsv")
+	$acc_path = "#{dir}accounts.tsv"
+	$tx_path =  "#{dir}transactions.tsv"
+	err = load_filedata($acc_path, $tx_path)
 	if err
 		exit(1)
 	end
