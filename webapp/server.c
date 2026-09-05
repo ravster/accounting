@@ -107,16 +107,9 @@ acc_append_file(u16 id, char* name, u16 type) {
 	fprintf(account_file, "%hu\t%s\t%hu\n", id, name, type);
 }
 
-// This makes it stupid simple to get the name of an account from it's ID, which we use as the index here;
-// arrays are awesome.
-char** acc_names;
-void
-acc_names_make() {
-	acc_names = calloc(accLen + 1, sizeof(char*)); // Because account-ids start at 1.
-	for (int i = 0; i < accLen; ++i) {
-		auto acc = accs[i];
-		acc_names[acc.id] = acc.name;
-	}
+char*
+acc_name(u16 id) {
+	return accs[id - 1].name;
 }
 
 enum AccTypes {
@@ -459,8 +452,8 @@ ledger_newest_30_newstr() {
 	if (txLen < 30) { total_rows = txLen; }
 	for (int i = txLen - 1; i >= txLen - total_rows; i--) {
 		auto tx = txs[i];
-		auto debit_acct_name = acc_names[tx.debit_account_id];
-		auto credit_acct_name = acc_names[tx.credit_account_id];
+		auto debit_acct_name = acc_name(tx.debit_account_id);
+		auto credit_acct_name = acc_name(tx.credit_account_id);
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<tr>"
 			  "<td>%hu</td>"
@@ -482,7 +475,6 @@ ledger_newest_30_newstr() {
 		}
 		sstr_append(out, temp);
 	}
-	printf("metric: ledger_newest_30_newstr: out_len:%ld\n", out->len);
 	free(temp);
 	return out;
 }
@@ -980,7 +972,6 @@ parse_request(httpContext* request) {
 
 	char* first_line = calloc(1, 512);
 	strncpy(first_line, buf, line_len);
-	printf("first_line:%s\n", first_line);
 	char* http_method = request->http_method;
 	char* endpoint = request->endpoint;
 	char* http_version = request->http_version;
@@ -1196,7 +1187,6 @@ main(int argc, char** argv) {
 	free(account_path);
 	free(tx_path);
 	load_filedata();
-	acc_names_make();
 
 	lfq_init(&client_socket_queue);
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
