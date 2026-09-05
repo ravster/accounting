@@ -10,49 +10,21 @@ I've been very pleasantly surprised by how easy it has been to build a basic web
 
 # Local
 
-```
-# Backup
-pg_dump -Fc -U ravidesai -d accounting > cafe_accounting.dump
-```
-
 On mac, because I'm tired of docker taking minutes to recognize that the source-file has changed and update that inside the container. Urgh, so annoying. I didn't spend all this time programming in C just for something silly in Docker to slow me down.
 ```
-brew install libpq postgresql jemalloc
-
-LC_ALL="en_US.UTF-8" /opt/homebrew/opt/postgresql@18/bin/postgres -D /opt/homebrew/var/postgresql@18
-
-clang -Wall -Wextra -g \
-  -I/opt/homebrew/opt/libpq/include \
-  -L/opt/homebrew/opt/libpq/lib \
-  -I/opt/homebrew/opt/jemalloc/include \
-  -L/opt/homebrew/opt/jemalloc/lib \
-  -o server server.c -lpthread -lpq -ljemalloc && \
-  PGDATABASE=accounting PGUSER=ravidesai PGPASSWORD=password ./server
+brew install jemalloc
 ```
 
 ## Check RAM usage
 
 ```
-ps -o pid,rss,vsz,comm | grep server
+ps -o pid,rss,vsz,comm | grep r_accounting
 for i in {1..20}; do curl 'http://localhost:3002/2'; done
-```
-
-## Run PG on mac
-
-```
-==> Caveats
-==> postgresql@18
-This formula has created a default database cluster with:
-  initdb --locale=en_US.UTF-8 -E UTF-8 /opt/homebrew/var/postgresql@18
-
-When uninstalling, some dead symlinks are left behind so you may want to run:
-  brew cleanup --prune-prefix
-
-To start postgresql@18 now and restart at login:
-  brew services start postgresql@18
-Or, if you don't want/need a background service you can just run:
-  LC_ALL="en_US.UTF-8" /opt/homebrew/opt/postgresql@18/bin/postgres -D /opt/homebrew/var/postgresql@18
 ```
 
 # History
 - 20260805: Remove Golang code from the project. Nothing in here needs a GC and a scheduler process constantly churning away.
+    Switched to building the whole webapp in C. This is a lot easier than I thought it would be; HTTP is just TCP sockets with string-parsing. TCP sockets are provided out of the box by the C stdlib, and string-manipulation in C is nowhere close to as difficult as people make it out to be, at least in a program of this scale. Plenty of C programs manipulate strings, and I can just have my own custom strings struct made in a few hundred LOC.
+- 20260806: Purge PQ out of the codebase. We don't need a database for this program. It's a single-tenant program that has 2 tables. This can be a simple dir of flat-files. KISS
+    Removing libpq from the program immediately dropped the RAM usage from 20-30MB to 2-4MB. It seems the PQResult struct takes up a lot of space. Don't need that. Deleted. Booyah.
+- 20260905: Ruby version of the code is now close enough to parity that I consider it equivalent. The response time of the ruby server (460loc) is the same as the C server (1250loc), completely out of my expectations. This is pretty cool. I've gotten so used to Rails being slow at workplaces that I didn't realize that Ruby is so fast.
