@@ -21,46 +21,44 @@
 #define QUEUE_CAPACITY 64
 #define QUEUE_MASK (QUEUE_CAPACITY - 1)
 
-#define LOG_FUNC \
-    printf("%s\n", __func__)
-
 typedef uint16_t u16;
 typedef uint32_t u32;
 
 // Basic struct used for random multiple things.
 typedef struct {
 	char* name;
-	int int1;
+	int int1; // len
 	float total;
 } StrInt;
 
 // Globals so many functions can write to this.
 FILE *account_file, *tx_file;
 typedef struct {
-	u16 id;
+	u16 id; // len
 	float amount;
 	char* note;
-	u16 debit_account_id;
+	u16 debit_account_id; // cap
 	u16 credit_account_id;
 	u32 created_at;
 } Tx;
-Tx *txs;
-u16 txLen, txCap;
+Tx *txs; // This is 1-based. The 0th element is the sentinel value that captures length and capacity of the array, in the id and debit_account_id fields ints, respectively.
 
 Tx*
 tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_account_id, u32 created_at) {
-	if (txLen == txCap) {
-		txCap *= 2;
-		txs = realloc(txs, txCap);
+	u16 *len = &txs[0].id;
+	u16 *cap = &txs[0].debit_account_id;
+	if (*len == *cap) {
+		*cap *= 2;
+		txs = realloc(txs, *cap);
 	}
-	auto new_tx = &txs[txLen];
+	auto new_tx = &txs[*len + 1];
 	new_tx->id = id;
 	new_tx->amount = amount;
 	new_tx->note = strdup(note);
 	new_tx->debit_account_id = debit_account_id;
 	new_tx->credit_account_id = credit_account_id;
 	new_tx->created_at = created_at;
-	txLen++;
+	(*len)++;
 	return new_tx;
 }
 
@@ -72,29 +70,30 @@ tx_append_to_file(Tx* newTx) {
 }
 
 typedef struct {
-	u16 id;
+	u16 id; // len
 	char* name;
-	u16 type;
+	u16 type; // cap
 } Account;
 Account *accs;
-u16 accLen, accCap;
 
 void
 acc_append(u16 id, char* name, u16 type) {
-	if (accLen == accCap) {
-		accCap *= 2;
-		accs = realloc(accs, accCap);
+	u16 *len = accs[0].id;
+	u16 *cap = accs[0].type;
+	if (*len == *cap) {
+		*cap *= 2;
+		accs = realloc(accs, *cap);
 	}
-	auto new_acc = &accs[accLen];
+	auto new_acc = &accs[*len + 1];
 	new_acc->id = id;
 	new_acc->name = strdup(name);
 	new_acc->type = type;
-	accLen++;
+	(*len)++;
 }
 
 int
 acc_find_name(char* needle) {
-	for (int i = 0; i< accLen; i++) {
+	for (int i = 1; i <= accs[0].id; i++) {
 		if (strcmp(accs[i].name, needle) == 0) {
 			return 1;
 		}
@@ -395,7 +394,7 @@ tr_of_every_account() {
 		"Liability"
 	};
 
-	for (u16 i = 0; i < accLen; i++) {
+	for (u16 i = 1; i <= accs[0].id; i++) {
 		auto acc = accs[i];
 		char* type = acc_types[acc.type];
 		asprintf(&temp,
@@ -448,9 +447,10 @@ sstr*
 ledger_newest_30_newstr() {
 	sstr *out = sstr_new(4096);
 	char* temp = calloc(1024, 1);
-	auto total_rows = 30;
-	if (txLen < 30) { total_rows = txLen; }
-	for (int i = txLen - 1; i >= txLen - total_rows; i--) {
+	int total_rows = 30;
+	u16 *txLen = &txs[0].id;
+	if (*txLen < 30) { total_rows = *txLen; }
+	for (int i = *txLen; i > *txLen - total_rows; i--) {
 		auto tx = txs[i];
 		auto debit_acct_name = acc_name(tx.debit_account_id);
 		auto credit_acct_name = acc_name(tx.credit_account_id);
@@ -483,7 +483,7 @@ char*
 account_selection_options_new() {
 	sstr* out = sstr_new(1024);
 	char* temp = calloc(1024, 1);
-	for (u16 i = 0; i < accLen; i++) {
+	for (u16 i = 1; i <= accs[0].id; i++) {
 		auto acc = accs[i];
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<option value=\"%hu\">%s</option>",
@@ -645,7 +645,7 @@ void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
 }
 
 void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
-	for (u16 i = 0; i < accLen; i++) {
+	for (u16 i = 1; i <= accs[0].id; i++) {
 		auto acc = accs[i];
 		switch (acc.type) {
 			case ASSET:
@@ -672,7 +672,8 @@ bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
 }
 
 void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
-	for (u16 i=0; i<txLen; i++) {
+	u16 *txLen = &txs[0].id;
+	for (u16 i=1; i<*txLen; i++) {
 		auto tx = txs[i];
 		if (tx.created_at > stop) { continue; }
 
@@ -719,11 +720,9 @@ bs_accs_trs_new(BsAccs* accs, uint8_t accType) {
 						"<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total);
 				break;
 			default:
-				LOG_FUNC;
 				printf("Shouldn't have gotten to this default case.\n");
 		}
 		if (written > 89) {
-			LOG_FUNC;
 			printf("snprintf fail. name=%s total=%u\n", it.name, it.total);
 		}
 		outLen += written;
@@ -746,7 +745,8 @@ incomeStatement(httpContext* request) {
 
 	// List of Tx that are in the time period.
 	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
-	for (u16 i = 0; i < txLen; i++) {
+	u16 *txLen = &txs[0].id;
+	for (u16 i = 0; i < *txLen; i++) {
 		auto tx = txs[i];
 		if ((tx.created_at < start) || (tx.created_at >= stop)) {
 			continue;
@@ -760,13 +760,13 @@ incomeStatement(httpContext* request) {
 	}
 
 	float tot = 0;
-	StrInt* incomeAccs = calloc(accLen, sizeof(StrInt));
-	incomeAccs[0].total = 0; // Use this as array length
-	StrInt* expenseAccs = calloc(accLen, sizeof(StrInt));
-	expenseAccs[0].total = 0; // Use this as array length
+	StrInt* incomeAccs = calloc(accs[0].id, sizeof(StrInt));
+	incomeAccs[0].int1 = 0; // Use this as array length
+	StrInt* expenseAccs = calloc(accs[0].id, sizeof(StrInt));
+	expenseAccs[0].int1 = 0; // Use this as array length
 	StrInt* newStrInt;
 
-	for (u16 i = 0; i < accLen; i++) {
+	for (u16 i = 1; i < accs[0].id; i++) {
 		auto acc = accs[i];
 		switch (acc.type) {
 			case INCOME:
@@ -837,7 +837,7 @@ createLedgerEntry(httpContext* request) {
 		return;
 	}
 	// TODO Check debit and credit id map to actual accounts
-	Tx* lastTx = &txs[txLen - 1];
+	Tx* lastTx = &txs[txs[0].id];
 	u16 newId = lastTx->id + 1;
 	time_t t1 = time(NULL);
 	struct tm* t2 = localtime(&t1);
@@ -869,7 +869,7 @@ createAccount(httpContext* request) {
 		free(out); free(name2); free(name); free(type);
 		return;
 	}
-	u16 new_account_id = accLen + 1;
+	u16 new_account_id = accs[0].id + 1;
 	int type_i = atoi(type);
 	if ((type_i > LIABILITY) || (type_i < INCOME)) {
 		char* out;
@@ -1128,8 +1128,9 @@ load_filedata() {
 	char buf[256];
 
 	rewind(account_file);
-	accCap = 128; accLen = 0;
-	accs = calloc(accCap, sizeof(Account));
+	accs = calloc(128, sizeof(Account));
+	accs[0].id = 0;
+	accs[0].type = 127;
 	u16 id;
 	char* name = calloc(32, 1);
 	u16 type;
@@ -1146,8 +1147,9 @@ load_filedata() {
 	printf("Loaded %hu accounts\n", accLen);
 
 	rewind(tx_file);
-	txCap = 128; txLen = 0;
-	txs = calloc(txCap, sizeof(Tx));
+	txs = calloc(128, sizeof(Tx));
+	txs[0].id = 0;
+	txs[0].debit_account_id = 127;
 	float amount;
 	char* note = calloc(128, 1);
 	u16 debit_account_id;
@@ -1163,7 +1165,7 @@ load_filedata() {
 		}
 		tx_append(id, amount, note, debit_account_id, credit_account_id, created_at);
 	}
-	printf("Loaded %hu txs\n", txLen);
+	printf("Loaded %hu txs\n", txs[0].id);
 }
 
 int
