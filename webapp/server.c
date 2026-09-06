@@ -78,8 +78,8 @@ Account *accs;
 
 void
 acc_append(u16 id, char* name, u16 type) {
-	u16 *len = accs[0].id;
-	u16 *cap = accs[0].type;
+	u16 *len = &accs[0].id;
+	u16 *cap = &accs[0].type;
 	if (*len == *cap) {
 		*cap *= 2;
 		accs = realloc(accs, *cap);
@@ -108,7 +108,7 @@ acc_append_file(u16 id, char* name, u16 type) {
 
 char*
 acc_name(u16 id) {
-	return accs[id - 1].name;
+	return accs[id].name;
 }
 
 enum AccTypes {
@@ -672,8 +672,7 @@ bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
 }
 
 void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
-	u16 *txLen = &txs[0].id;
-	for (u16 i=1; i<*txLen; i++) {
+	for (u16 i=1; i <= txs[0].id; i++) {
 		auto tx = txs[i];
 		if (tx.created_at > stop) { continue; }
 
@@ -746,7 +745,7 @@ incomeStatement(httpContext* request) {
 	// List of Tx that are in the time period.
 	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
 	u16 *txLen = &txs[0].id;
-	for (u16 i = 0; i < *txLen; i++) {
+	for (u16 i = 1; i <= *txLen; i++) {
 		auto tx = txs[i];
 		if ((tx.created_at < start) || (tx.created_at >= stop)) {
 			continue;
@@ -766,7 +765,7 @@ incomeStatement(httpContext* request) {
 	expenseAccs[0].int1 = 0; // Use this as array length
 	StrInt* newStrInt;
 
-	for (u16 i = 1; i < accs[0].id; i++) {
+	for (u16 i = 1; i <= accs[0].id; i++) {
 		auto acc = accs[i];
 		switch (acc.type) {
 			case INCOME:
@@ -1144,7 +1143,7 @@ load_filedata() {
 		}
 		acc_append(id, name, type);
 	}
-	printf("Loaded %hu accounts\n", accLen);
+	printf("Loaded %hu accounts\n", accs[0].id);
 
 	rewind(tx_file);
 	txs = calloc(128, sizeof(Tx));
