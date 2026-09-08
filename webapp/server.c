@@ -581,7 +581,7 @@ incomeStatementTrsNew(StrInt* strints, int accType) {
 	char tr[128];
 	char* trTemplate;
 	switch (accType) {
-		case 2:
+		case 0:
 			trTemplate = "<tr> <td>%s</td> <td>%.2f</td> <td></td> </tr>\n";
 			break;
 		case 1:

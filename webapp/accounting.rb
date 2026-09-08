@@ -57,7 +57,10 @@ end
 # BEGIN 1 layer below the request handlers
 def ledger_newest_30_newstr
 	out = ""
-	$txs.each { |tx|
+	start_idx = [$txs.length - 1, 0].max
+	stop_idx = [$txs.length - 30, 0].max
+	start_idx.downto(stop_idx) { |i|
+		tx = $txs[i]
 		debit_name = acc_name(tx.debit)
 		credit_name = acc_name(tx.credit)
 		tr = "<tr> <td>#{tx.id}</td> <td>#{tx.created}</td> <td>#{debit_name}</td> <td>#{credit_name}</td> <td>#{tx.note}</td> <td>#{tx.amount}</td> </tr>"
@@ -269,21 +272,11 @@ def incomeStatement(client_socket, first_line)
 	i_name_tot.sort_by! { |_, tot| -tot }
 	e_name_tot.sort_by! { |_, tot| -tot }
 	i_name_tot.each { |name, tot|
-		tr = sprintf(<<~TR, name, tot)
-				<tr> <td>%s</td>
-					 <tx>%.2f</td>
-					 <td></td>
-				</tr>\n
-		TR
+		tr = sprintf("<tr> <td>%s</td> <td>%.2f</td> <td></td> </tr>", name, tot)
 		incomeTrs << tr
 	}
 	e_name_tot.each { |name, tot|
-		tr = sprintf(<<~TR, name, tot)
-				<tr> <td>%s</td>
-					 <td></td>
-					 <td>%.2f</td>
-				</tr>\n
-		TR
+		tr = sprintf("<tr> <td>%s</td> <td></td> <td>%.2f</td> </tr>", name, tot)
 		expenseTrs << tr
 	}
 	trs = incomeTrs.concat(expenseTrs)
