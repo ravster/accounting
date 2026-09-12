@@ -16,8 +16,8 @@
 // TODO Don't open a new file for each template on each request. It's horribly wasteful. Load on program startup. Store in a function-local static var.
 // TODO Go through each function and figure out what local vars can be made "thread_local static". That'll reduce the amount of malloc/free.
 
-# define local_persist static
-# define global_variable static
+#define local_persist static
+#define global_variable static
 
 #define PORT 3002
 #define THREAD_POOL_SIZE 4
@@ -36,7 +36,7 @@ typedef struct {
 } StrInt;
 
 // Globals so many functions can write to this.
-global_variable FILE *account_file, *tx_file;
+global_variable FILE *AccountFile, *TxFile;
 typedef struct {
 	u16 id; // len
 	float amount;
@@ -68,7 +68,7 @@ tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_acc
 
 void
 tx_append_to_file(Tx* newTx) {
-	fprintf(tx_file, "%hu\t%.2f\t%s\t%hu\t%hu\t%u\n",
+	fprintf(TxFile, "%hu\t%.2f\t%s\t%hu\t%hu\t%u\n",
 			newTx->id, newTx->amount, newTx->note,
 			newTx->debit_account_id, newTx->credit_account_id, newTx->created_at);
 }
@@ -107,7 +107,7 @@ acc_find_name(char* needle) {
 
 void
 acc_append_file(u16 id, char* name, u16 type) {
-	fprintf(account_file, "%hu\t%s\t%hu\n", id, name, type);
+	fprintf(AccountFile, "%hu\t%s\t%hu\n", id, name, type);
 }
 
 char*
@@ -1137,17 +1137,17 @@ load_filedata() {
 	u16 id;
 	char* name = calloc(32, 1);
 	u16 type;
-	fgets(buf, 256, account_file); // Skip headers
-	printf("Reading account_file. Headers:%s", buf);
-	while(fgets(buf, 256, account_file) != NULL) {
+	fgets(buf, 256, AccountFile); // Skip headers
+	printf("Reading AccountFile. Headers:%s", buf);
+	while(fgets(buf, 256, AccountFile) != NULL) {
 		int count = sscanf(buf, "%hu\t%31[^\t]\t%hu", &id, name, &type);
 		if (count != 3) {
-			printf("Epic fail parsing account_file.\nsscanf returned:%d\nbuf:%s\n", count, buf);
+			printf("Epic fail parsing AccountFile.\nsscanf returned:%d\nbuf:%s\n", count, buf);
 			exit(1);
 		}
 		acc_append(id, name, type);
 	}
-	fseek(account_file, 0, SEEK_CUR);
+	fseek(AccountFile, 0, SEEK_CUR);
 	printf("Loaded %hu accounts\n", accs[0].id);
 
 	txs = calloc(128, sizeof(Tx));
@@ -1158,9 +1158,9 @@ load_filedata() {
 	u16 debit_account_id;
 	u16 credit_account_id;
 	u32 created_at;
-	fgets(buf, 256, tx_file); // Skip headers.
-	printf("Reading tx_file. Headers:%s", buf);
-	while(fgets(buf, 256, tx_file) != NULL) {
+	fgets(buf, 256, TxFile); // Skip headers.
+	printf("Reading TxFile. Headers:%s", buf);
+	while(fgets(buf, 256, TxFile) != NULL) {
 		int count = sscanf(buf, "%hu\t%f\t%127[^\t]\t%hu\t%hu\t%u", &id, &amount, note, &debit_account_id, &credit_account_id, &created_at);
 		if (count != 6) {
 			printf("Fail: Can't parse tx-file right.\nsscanf returned:%d\nbuf%s\n", count, buf);
@@ -1168,21 +1168,21 @@ load_filedata() {
 		}
 		tx_append(id, amount, note, debit_account_id, credit_account_id, created_at);
 	}
-	fseek(tx_file, 0, SEEK_CUR);
+	fseek(TxFile, 0, SEEK_CUR);
 	printf("Loaded %hu txs\n", txs[0].id);
 }
 
 void
 handle_sigint(int sig) {
 	printf("Signal %d rcvd. Closing files...\n", sig);
-	if (account_file != NULL) {
-		fflush(account_file);
-		fclose(account_file);
+	if (AccountFile != NULL) {
+		fflush(AccountFile);
+		fclose(AccountFile);
 		printf("Account file closed.\n");
 	}
-	if (tx_file != NULL) {
-		fflush(tx_file);
-		fclose(tx_file);
+	if (TxFile != NULL) {
+		fflush(TxFile);
+		fclose(TxFile);
 		printf("Tx file closed.\n");
 	}
 	exit(0);
@@ -1206,14 +1206,14 @@ main(int argc, char** argv) {
 	char* dirpath = argv[1];
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
-	account_file = fopen(account_path, "r+");
-	setvbuf(account_file, NULL, _IONBF, 0);
-	if (!account_file) { printf("Can't load path:%s\n", account_path); return 1; }
+	AccountFile = fopen(account_path, "r+");
+	setvbuf(AccountFile, NULL, _IONBF, 0);
+	if (!AccountFile) { printf("Can't load path:%s\n", account_path); return 1; }
 	char* tx_path;
 	asprintf(&tx_path, "%stransactions.tsv", dirpath);
-	tx_file = fopen(tx_path, "r+");
-	setvbuf(tx_file, NULL, _IONBF, 0);
-	if (!tx_file) { printf("Can't load path:%s\n", tx_path); return 1; }
+	TxFile = fopen(tx_path, "r+");
+	setvbuf(TxFile, NULL, _IONBF, 0);
+	if (!TxFile) { printf("Can't load path:%s\n", tx_path); return 1; }
 	free(account_path);
 	free(tx_path);
 	load_filedata();
@@ -1264,8 +1264,8 @@ main(int argc, char** argv) {
 		lfq_push(&client_socket_queue, client_socket);
 	}
 	lfq_destroy(&client_socket_queue);
-	fclose(account_file);
-	fclose(tx_file);
+	fclose(AccountFile);
+	fclose(TxFile);
 	return 0;
 }
 
