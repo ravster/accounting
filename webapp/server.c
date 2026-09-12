@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stdatomic.h>
 #include <semaphore.h>
 #include <math.h>
@@ -1130,7 +1131,6 @@ void
 load_filedata() {
 	char buf[256];
 
-	rewind(account_file);
 	accs = calloc(128, sizeof(Account));
 	accs[0].id = 0;
 	accs[0].type = 127;
@@ -1147,9 +1147,9 @@ load_filedata() {
 		}
 		acc_append(id, name, type);
 	}
+	fseek(account_file, 0, SEEK_CUR);
 	printf("Loaded %hu accounts\n", accs[0].id);
 
-	rewind(tx_file);
 	txs = calloc(128, sizeof(Tx));
 	txs[0].id = 0;
 	txs[0].debit_account_id = 127;
@@ -1168,7 +1168,24 @@ load_filedata() {
 		}
 		tx_append(id, amount, note, debit_account_id, credit_account_id, created_at);
 	}
+	fseek(tx_file, 0, SEEK_CUR);
 	printf("Loaded %hu txs\n", txs[0].id);
+}
+
+void
+handle_sigint(int sig) {
+	printf("Signal %d rcvd. Closing files...\n", sig);
+	if (account_file != NULL) {
+		fflush(account_file);
+		fclose(account_file);
+		printf("Account file closed.\n");
+	}
+	if (tx_file != NULL) {
+		fflush(tx_file);
+		fclose(tx_file);
+		printf("Tx file closed.\n");
+	}
+	exit(0);
 }
 
 int
@@ -1177,16 +1194,24 @@ main(int argc, char** argv) {
 		printf("Are you sure about that?\nUsage:\n\tserver directory/containing/files/\n\n");
 		exit(1);
 	}
+	struct sigaction sa;
+	sa.sa_handler = handle_sigint;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART;
+	if (sigaction(SIGINT, &sa, NULL) < 0) {
+		printf("Error registering sigaction for SIGINT (Ctrl-c)\n");
+		exit(1);
+	}
 
 	char* dirpath = argv[1];
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
-	account_file = fopen(account_path, "a+");
+	account_file = fopen(account_path, "r+");
 	setvbuf(account_file, NULL, _IONBF, 0);
 	if (!account_file) { printf("Can't load path:%s\n", account_path); return 1; }
 	char* tx_path;
 	asprintf(&tx_path, "%stransactions.tsv", dirpath);
-	tx_file = fopen(tx_path, "a+");
+	tx_file = fopen(tx_path, "r+");
 	setvbuf(tx_file, NULL, _IONBF, 0);
 	if (!tx_file) { printf("Can't load path:%s\n", tx_path); return 1; }
 	free(account_path);
