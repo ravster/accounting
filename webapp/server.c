@@ -78,17 +78,17 @@ typedef struct {
 	char* name;
 	u16 type; // cap
 } Account;
-global_variable Account *accs;
+global_variable Account *Accs;
 
 void
 acc_append(u16 id, char* name, u16 type) {
-	u16 *len = &accs[0].id;
-	u16 *cap = &accs[0].type;
+	u16 *len = &Accs[0].id;
+	u16 *cap = &Accs[0].type;
 	if (*len == *cap) {
 		*cap *= 2;
-		accs = realloc(accs, *cap);
+		Accs = realloc(Accs, *cap);
 	}
-	auto new_acc = &accs[*len + 1];
+	auto new_acc = &Accs[*len + 1];
 	new_acc->id = id;
 	new_acc->name = strdup(name);
 	new_acc->type = type;
@@ -97,8 +97,8 @@ acc_append(u16 id, char* name, u16 type) {
 
 int
 acc_find_name(char* needle) {
-	for (int i = 1; i <= accs[0].id; i++) {
-		if (strcmp(accs[i].name, needle) == 0) {
+	for (int i = 1; i <= Accs[0].id; i++) {
+		if (strcmp(Accs[i].name, needle) == 0) {
 			return 1;
 		}
 	}
@@ -112,7 +112,7 @@ acc_append_file(u16 id, char* name, u16 type) {
 
 char*
 acc_name(u16 id) {
-	return accs[id].name;
+	return Accs[id].name;
 }
 
 enum AccTypes {
@@ -398,8 +398,8 @@ tr_of_every_account() {
 		"Liability"
 	};
 
-	for (u16 i = 1; i <= accs[0].id; i++) {
-		auto acc = accs[i];
+	for (u16 i = 1; i <= Accs[0].id; i++) {
+		auto acc = Accs[i];
 		char* type = acc_types[acc.type];
 		asprintf(&temp,
 			"<tr>"
@@ -487,8 +487,8 @@ char*
 account_selection_options_new() {
 	sstr* out = sstr_new(1024);
 	char* temp = calloc(1024, 1);
-	for (u16 i = 1; i <= accs[0].id; i++) {
-		auto acc = accs[i];
+	for (u16 i = 1; i <= Accs[0].id; i++) {
+		auto acc = Accs[i];
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<option value=\"%hu\">%s</option>",
 			acc.id,
@@ -649,8 +649,8 @@ void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
 }
 
 void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
-	for (u16 i = 1; i <= accs[0].id; i++) {
-		auto acc = accs[i];
+	for (u16 i = 1; i <= Accs[0].id; i++) {
+		auto acc = Accs[i];
 		switch (acc.type) {
 			case ASSET:
 				bs_accs_append(assets, acc.id, acc.name);
@@ -704,10 +704,10 @@ void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
 }
 
 char*
-bs_accs_trs_new(BsAccs* accs, uint8_t accType) {
+bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 	u16 outLen=0; u16 outCap=1024; char* out= calloc(outCap, 1);
-	for (u16 i=0; i<accs->len; i++) {
-		auto it = accs->data[i];
+	for (u16 i=0; i<Accs->len; i++) {
+		auto it = Accs->data[i];
 		if (outLen > outCap-90) {
 			outCap *=2;
 			out = realloc(out, outCap);
@@ -763,14 +763,14 @@ incomeStatement(httpContext* request) {
 	}
 
 	float tot = 0;
-	StrInt* incomeAccs = calloc(accs[0].id, sizeof(StrInt));
+	StrInt* incomeAccs = calloc(Accs[0].id, sizeof(StrInt));
 	incomeAccs[0].int1 = 0; // Use this as array length
-	StrInt* expenseAccs = calloc(accs[0].id, sizeof(StrInt));
+	StrInt* expenseAccs = calloc(Accs[0].id, sizeof(StrInt));
 	expenseAccs[0].int1 = 0; // Use this as array length
 	StrInt* newStrInt;
 
-	for (u16 i = 1; i <= accs[0].id; i++) {
-		auto acc = accs[i];
+	for (u16 i = 1; i <= Accs[0].id; i++) {
+		auto acc = Accs[i];
 		switch (acc.type) {
 			case INCOME:
 				tot = 0;
@@ -872,7 +872,7 @@ createAccount(httpContext* request) {
 		free(out); free(name2); free(name); free(type);
 		return;
 	}
-	u16 new_account_id = accs[0].id + 1;
+	u16 new_account_id = Accs[0].id + 1;
 	int type_i = atoi(type);
 	if ((type_i > LIABILITY) || (type_i < INCOME)) {
 		char* out;
@@ -1131,9 +1131,9 @@ void
 load_filedata() {
 	char buf[256];
 
-	accs = calloc(128, sizeof(Account));
-	accs[0].id = 0;
-	accs[0].type = 127;
+	Accs = calloc(128, sizeof(Account));
+	Accs[0].id = 0;
+	Accs[0].type = 127;
 	u16 id;
 	char* name = calloc(32, 1);
 	u16 type;
@@ -1148,7 +1148,7 @@ load_filedata() {
 		acc_append(id, name, type);
 	}
 	fseek(AccountFile, 0, SEEK_CUR);
-	printf("Loaded %hu accounts\n", accs[0].id);
+	printf("Loaded %hu accounts\n", Accs[0].id);
 
 	Txs = calloc(128, sizeof(Tx));
 	Txs[0].id = 0;
