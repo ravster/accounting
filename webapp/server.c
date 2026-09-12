@@ -12,8 +12,11 @@
 #include <arpa/inet.h>
 
 // Far future:
-// Should make a separate queue of pointers that need to be freed, and have a worker thread only for freeing temp memory.
-// Make this a multi-user program. Useful for people that have multiple businesses or sth.
+// TODO Don't open a new file for each template on each request. It's horribly wasteful. Load on program startup. Store in a function-local static var.
+// TODO Go through each function and figure out what local vars can be made "thread_local static". That'll reduce the amount of malloc/free.
+
+# define local_persist static
+# define global_variable static
 
 #define PORT 3002
 #define THREAD_POOL_SIZE 4
@@ -32,7 +35,7 @@ typedef struct {
 } StrInt;
 
 // Globals so many functions can write to this.
-FILE *account_file, *tx_file;
+global_variable FILE *account_file, *tx_file;
 typedef struct {
 	u16 id; // len
 	float amount;
@@ -41,7 +44,7 @@ typedef struct {
 	u16 credit_account_id;
 	u32 created_at;
 } Tx;
-Tx *txs; // This is 1-based. The 0th element is the sentinel value that captures length and capacity of the array, in the id and debit_account_id fields ints, respectively.
+global_variable Tx *txs; // This is 1-based. The 0th element is the sentinel value that captures length and capacity of the array, in the id and debit_account_id fields ints, respectively.
 
 Tx*
 tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_account_id, u32 created_at) {
@@ -74,7 +77,7 @@ typedef struct {
 	char* name;
 	u16 type; // cap
 } Account;
-Account *accs;
+global_variable Account *accs;
 
 void
 acc_append(u16 id, char* name, u16 type) {
@@ -243,7 +246,7 @@ lfq_pop(lock_free_queue* q) {
 	}
 }
 
-lock_free_queue client_socket_queue = {0};
+global_variable lock_free_queue client_socket_queue = {0};
 
 // END lock_free queue implementation
 
@@ -897,7 +900,8 @@ testPost(httpContext* req) {
 
 void
 listLedger(httpContext* request) {
-	char* body = read_file_newstr("templates/ledger.html");
+	static char* body;
+	if (!body) { body = read_file_newstr("templates/ledger.html"); }
 	char* a1;
 	sstr* ln30 = ledger_newest_30_newstr();
 	char* aso = account_selection_options_new();
@@ -906,31 +910,32 @@ listLedger(httpContext* request) {
 	sstr_free(ln30);
 	free(aso);
 	free(a1);
-	free(body);
 }
 
 void
 listAccounts(httpContext* request) {
-	char* body = read_file_newstr("templates/listAccounts.html");
+	local_persist char* body;
+	if (!body) { body = read_file_newstr("templates/listAccounts.html"); }
 	char* a1;
+	// TODO This doesn't change on each page load, so we shouldn't recalc this on each page load. We should cache the new value of this after the addAccount operation instead.
 	sstr* trs = tr_of_every_account();
 	asprintf(&a1, body, trs->buf);
 	write_to_client(request, 200, a1);
 	sstr_free(trs);
 	free(a1);
-	free(body);
 }
 
 void
 homePage(httpContext* request) {
-	char* body = read_file_newstr("templates/home.html");
+	local_persist char* body;
+	if (!body) { body = read_file_newstr("templates/home.html"); }
 	write_to_client(request, 200, body);
-	free(body);
 }
 
 void
 balanceSheet(httpContext* request) {
-	auto template = read_file_newstr("templates/balanceSheet.html");
+	local_persist char *template;
+	if (!template) { template = read_file_newstr("templates/balanceSheet.html"); }
 	u16 month, year;
 	u32 start, stop;
 	char prevLink[12], nextLink[12];
@@ -949,7 +954,6 @@ balanceSheet(httpContext* request) {
 	free(body);
 	free(trs_a);
 	free(trs_l);
-	free(template);
 }
 
 // This will take in the whole request and parse out the usable parts like params, endpoint, headers, etc.
@@ -1191,6 +1195,7 @@ main(int argc, char** argv) {
 
 	lfq_init(&client_socket_queue);
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
+		// TODO Switch to having each thread-worker declare it's own thread_local static var of this. This doesn't need to be a global.
 		httpContext *req = &requests[i];
 		req->getP = malloc(256);
 		req->postP = malloc(256);
