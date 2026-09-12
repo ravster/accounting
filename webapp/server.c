@@ -45,17 +45,17 @@ typedef struct {
 	u16 credit_account_id;
 	u32 created_at;
 } Tx;
-global_variable Tx *txs; // This is 1-based. The 0th element is the sentinel value that captures length and capacity of the array, in the id and debit_account_id fields ints, respectively.
+global_variable Tx *Txs; // This is 1-based. The 0th element is the sentinel value that captures length and capacity of the array, in the id and debit_account_id fields ints, respectively.
 
 Tx*
 tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_account_id, u32 created_at) {
-	u16 *len = &txs[0].id;
-	u16 *cap = &txs[0].debit_account_id;
+	u16 *len = &Txs[0].id;
+	u16 *cap = &Txs[0].debit_account_id;
 	if (*len == *cap) {
 		*cap *= 2;
-		txs = realloc(txs, *cap);
+		Txs = realloc(Txs, *cap);
 	}
-	auto new_tx = &txs[*len + 1];
+	auto new_tx = &Txs[*len + 1];
 	new_tx->id = id;
 	new_tx->amount = amount;
 	new_tx->note = strdup(note);
@@ -452,10 +452,10 @@ ledger_newest_30_newstr() {
 	sstr *out = sstr_new(4096);
 	char* temp = calloc(1024, 1);
 	int total_rows = 30;
-	u16 *txLen = &txs[0].id;
+	u16 *txLen = &Txs[0].id;
 	if (*txLen < 30) { total_rows = *txLen; }
 	for (int i = *txLen; i > *txLen - total_rows; i--) {
-		auto tx = txs[i];
+		auto tx = Txs[i];
 		auto debit_acct_name = acc_name(tx.debit_account_id);
 		auto credit_acct_name = acc_name(tx.credit_account_id);
 		size_t written_to_temp = snprintf(temp, 1024,
@@ -676,8 +676,8 @@ bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
 }
 
 void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
-	for (u16 i=1; i <= txs[0].id; i++) {
-		auto tx = txs[i];
+	for (u16 i=1; i <= Txs[0].id; i++) {
+		auto tx = Txs[i];
 		if (tx.created_at > stop) { continue; }
 
 		// TODO maybe bs_accs_a and bs_accs_l should be one array? Don't know. Pray on it.
@@ -748,9 +748,9 @@ incomeStatement(httpContext* request) {
 
 	// List of Tx that are in the time period.
 	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
-	u16 *txLen = &txs[0].id;
+	u16 *txLen = &Txs[0].id;
 	for (u16 i = 1; i <= *txLen; i++) {
-		auto tx = txs[i];
+		auto tx = Txs[i];
 		if ((tx.created_at < start) || (tx.created_at >= stop)) {
 			continue;
 		}
@@ -840,7 +840,7 @@ createLedgerEntry(httpContext* request) {
 		return;
 	}
 	// TODO Check debit and credit id map to actual accounts
-	Tx* lastTx = &txs[txs[0].id];
+	Tx* lastTx = &Txs[Txs[0].id];
 	u16 newId = lastTx->id + 1;
 	time_t t1 = time(NULL);
 	struct tm* t2 = localtime(&t1);
@@ -1150,9 +1150,9 @@ load_filedata() {
 	fseek(AccountFile, 0, SEEK_CUR);
 	printf("Loaded %hu accounts\n", accs[0].id);
 
-	txs = calloc(128, sizeof(Tx));
-	txs[0].id = 0;
-	txs[0].debit_account_id = 127;
+	Txs = calloc(128, sizeof(Tx));
+	Txs[0].id = 0;
+	Txs[0].debit_account_id = 127;
 	float amount;
 	char* note = calloc(128, 1);
 	u16 debit_account_id;
@@ -1169,7 +1169,7 @@ load_filedata() {
 		tx_append(id, amount, note, debit_account_id, credit_account_id, created_at);
 	}
 	fseek(TxFile, 0, SEEK_CUR);
-	printf("Loaded %hu txs\n", txs[0].id);
+	printf("Loaded %hu Txs\n", Txs[0].id);
 }
 
 void
