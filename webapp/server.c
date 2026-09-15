@@ -110,11 +110,6 @@ acc_append_file(u16 id, char* name, u16 type) {
 	fprintf(AccountFile, "%hu\t%s\t%hu\n", id, name, type);
 }
 
-char*
-acc_name(u16 id) {
-	return Accs[id].name;
-}
-
 enum AccTypes {
 	INCOME,
 	EXPENSE,
@@ -291,36 +286,37 @@ httpContext_clear(httpContext* ctx) {
 }
 
 int // ok
-fillGetParams(httpContext* req) {
-	char* qmark = strchr(req->endpoint, '?');
+fillGetParams(httpContext* ctx) {
+	char* qmark = strchr(ctx->endpoint, '?');
 	if (qmark == NULL) { return 1; }
 	char* after_qmark = qmark+1;
 	size_t new_len = strlen(after_qmark);
-	req->getP = realloc(req->getP, new_len + 1);
+	ctx->getP = realloc(ctx->getP, new_len + 1);
 	// +1 so that the target is null-terminated .
-	strncpy(req->getP, after_qmark, new_len+1);
+	strncpy(ctx->getP, after_qmark, new_len+1);
 	return 1;
 }
 
 int // ok
-fillPostParams(httpContext* req) {
-	char* reqBodyStart = strstr(req->request_buf, "\r\n\r\n");
+fillPostParams(httpContext* ctx) {
+	char* reqBodyStart = strstr(ctx->request_buf, "\r\n\r\n");
 	// Nothing to do.
 	if ((reqBodyStart == NULL) || (strlen(reqBodyStart) == 0)) { return 1; }
 	reqBodyStart += 4; // 2 CR and 2 NL.
 	size_t newLen = strlen(reqBodyStart);
-	req->postP = realloc(req->postP, newLen + 1);
+	ctx->postP = realloc(ctx->postP, newLen + 1);
 	// +1 to get the automatic null-termination.
-	strncpy(req->postP, reqBodyStart, newLen + 1);
+	strncpy(ctx->postP, reqBodyStart, newLen + 1);
 	return 1;
 }
 
+// TODO Wouldn't need this. Move to using thread_local local_persist variables in the thread-mains.
 httpContext requests[4];
 // END httpContext object.
 
 int // err
 write_all(int socket, char* buffer, size_t len) {
-	char* ptr = buffer;
+	auto ptr = buffer;
 	size_t written = 0;
 	while (written < len) {
 		auto just_wrote = write(socket, ptr, len - written);
@@ -335,13 +331,13 @@ write_all(int socket, char* buffer, size_t len) {
 }
 
 int // ok
-parse_route(u16* route, char* endpoint) {
+parse_route(u16 *route, char *endpoint) {
 	if (endpoint[0] != '/') {
 		return 0;
 	}
 	char* start = endpoint +1;
 	char* endptr;
-	u16 out = strtoul(start, &endptr, 10);
+	auto out = strtoul(start, &endptr, 10);
 	if (start == endptr) {
 		return 0;
 	}
@@ -352,7 +348,7 @@ parse_route(u16* route, char* endpoint) {
 // Write HTTP response to client.
 void
 write_to_client(httpContext* req, int httpStatus, char* body) {
-	char* a1;
+	char *a1;
 	asprintf(&a1, "HTTP/1.1 %d \r\nContent-Length: %lu\r\n\r\n%s",
 		httpStatus, strlen(body), body);
 	write_all(req->client_socket, a1, strlen(a1));
@@ -401,6 +397,8 @@ tr_of_every_account() {
 	for (u16 i = 1; i <= Accs[0].id; i++) {
 		auto acc = Accs[i];
 		char* type = acc_types[acc.type];
+		// TODO Don't need to asprintf this. We know what it's max size will be so we should keep this
+		// on the stack (It's small enough), and snprintf into it.
 		asprintf(&temp,
 			"<tr>"
 			  "<td>%hu</td>"
@@ -417,47 +415,19 @@ tr_of_every_account() {
 	return out;
 }
 
-char* account_name_from_id_;
-// Called at start of program.
-u16 // ok
-account_name_from_id_prepopulate() {
-	char* a1 = malloc(1024); a1[0]=0;
-	size_t a1len = 0;
-	size_t a1cap = 1024;
-	char* eachPair = malloc(512);
-	auto total_rows = 3;
-	for (u16 i=0; i < total_rows; i++) {
-		snprintf(eachPair, 512,
-				"%s=%s&",
-				"foo",
-				"foo"
-			);
-		size_t pairlen = strlen(eachPair);
-		size_t newlen = pairlen + a1len;
-		if (newlen+1 > a1cap) {
-			a1cap *= 2;
-			a1 = realloc(a1, a1cap);
-		}
-		memcpy(a1 + a1len, eachPair, pairlen);
-		a1len = newlen;
-		a1[newlen]=0;
-	}
-	account_name_from_id_ = a1;
-	free(eachPair);
-	return 1;
-}
-
 sstr*
 ledger_newest_30_newstr() {
 	sstr *out = sstr_new(4096);
+	// Should be local_persist that is shared between all threads. Actually, addTx should write this
+	// whole thing to memory, and we shouldn't recalc this every page-load.
 	char* temp = calloc(1024, 1);
-	int total_rows = 30;
-	u16 *txLen = &Txs[0].id;
+	auto total_rows = 30;
+	auto *txLen = &Txs[0].id;
 	if (*txLen < 30) { total_rows = *txLen; }
 	for (int i = *txLen; i > *txLen - total_rows; i--) {
 		auto tx = Txs[i];
-		auto debit_acct_name = acc_name(tx.debit_account_id);
-		auto credit_acct_name = acc_name(tx.credit_account_id);
+		auto debit_acct_name = Accs[tx.debit_account_id].name;
+		auto credit_acct_name = Accs[tx.credit_account_id].name;
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<tr>"
 			  "<td>%hu</td>"
@@ -486,6 +456,7 @@ ledger_newest_30_newstr() {
 char*
 account_selection_options_new() {
 	sstr* out = sstr_new(1024);
+	// TODO. local_persist across all threads. Calculated and cached after addAccount op.
 	char* temp = calloc(1024, 1);
 	for (u16 i = 1; i <= Accs[0].id; i++) {
 		auto acc = Accs[i];
@@ -737,7 +708,8 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 
 void
 incomeStatement(httpContext* request) {
-	auto template = read_file_newstr("templates/incomeStatement.html");
+	local_persist char *template;
+	if (!template) { template = read_file_newstr("templates/incomeStatement.html"); }
 
 	u16 month, year;
 	u32 start, stop;
@@ -824,7 +796,6 @@ incomeStatement(httpContext* request) {
 	free(itrs); free(etrs); free(trs);
 	free(periodTxs);
 	free(body);
-	free(template);
 }
 
 void
@@ -901,7 +872,7 @@ testPost(httpContext* req) {
 
 void
 listLedger(httpContext* request) {
-	static char* body;
+	local_persist char* body;
 	if (!body) { body = read_file_newstr("templates/ledger.html"); }
 	char* a1;
 	sstr* ln30 = ledger_newest_30_newstr();
