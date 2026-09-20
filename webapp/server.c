@@ -12,10 +12,6 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 
-// Far future:
-// TODO Don't open a new file for each template on each request. It's horribly wasteful. Load on program startup. Store in a function-local static var.
-// TODO Go through each function and figure out what local vars can be made "thread_local static". That'll reduce the amount of malloc/free.
-
 #define local_persist static
 #define global_variable static
 
@@ -246,6 +242,26 @@ global_variable lock_free_queue client_socket_queue = {0};
 
 // END lock_free queue implementation
 
+void
+printStrInts(StrInt* in) {
+	auto len = in[0].int1;
+	printf("StrInt: len=%d\n  Name\tInt1\tTotal\n", len);
+	for (int i = 1; i <= len; i++) {
+		auto it = in[i];
+		printf("  %s\t%d\t%f\n", it.name, it.int1, it.total);
+	}
+}
+
+void
+printTxs(Tx* in) {
+	auto len = in[0].id;
+	printf("Tx: len=%d cap=%d\n  Name\tInt1\tTotal\n", len, in[0].debit_account_id);
+	for (int i = 1; i <= len; i++) {
+		auto it = in[i];
+		printf("%.2f\t%s\t%d\t%d\t%d\n", it.amount, it.note, it.debit_account_id, it.credit_account_id, it.created_at);
+	}
+}
+
 char*
 params_get_newstr(char* haystack, char* needle) {
 	if (strlen(haystack) == 0) { return NULL; }
@@ -386,7 +402,6 @@ read_file_newstr(char* path) {
 sstr*
 tr_of_every_account() {
 	sstr *out = sstr_new(512);
-	char* temp;
 	char* acc_types[4] = {
 		"Income",
 		"Expense",
@@ -394,23 +409,19 @@ tr_of_every_account() {
 		"Liability"
 	};
 
+	local_persist thread_local char* temp;
+	if (temp == NULL) { temp = malloc(90); }
 	for (u16 i = 1; i <= Accs[0].id; i++) {
 		auto acc = Accs[i];
 		char* type = acc_types[acc.type];
-		// TODO Don't need to asprintf this. We know what it's max size will be so we should keep this
-		// on the stack (It's small enough), and snprintf into it.
-		asprintf(&temp,
-			"<tr>"
-			  "<td>%hu</td>"
-			  "<td>%s</td>"
-			  "<td>%s</td>"
-			"</tr>\n",
-			acc.id,
-			acc.name,
-			type
-		);
+		auto written = snprintf(temp, 90,
+			"<tr>" "<td>%hu</td>" "<td>%s</td>" "<td>%s</td>" "</tr>\n",
+			acc.id, acc.name, type);
+		if (written >= 90) {
+			printf("err. tr_of_every_account. written over 90 chars. id=%hu name=%s type=%s\n",
+					acc.id, acc.name, type);
+		}
 		sstr_append(out, temp);
-		free(temp);
 	}
 	return out;
 }
@@ -1178,13 +1189,13 @@ main(int argc, char** argv) {
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
 	AccountFile = fopen(account_path, "r+");
-	setvbuf(AccountFile, NULL, _IONBF, 0);
 	if (!AccountFile) { printf("Can't load path:%s\n", account_path); return 1; }
+	setvbuf(AccountFile, NULL, _IONBF, 0);
 	char* tx_path;
 	asprintf(&tx_path, "%stransactions.tsv", dirpath);
 	TxFile = fopen(tx_path, "r+");
-	setvbuf(TxFile, NULL, _IONBF, 0);
 	if (!TxFile) { printf("Can't load path:%s\n", tx_path); return 1; }
+	setvbuf(TxFile, NULL, _IONBF, 0);
 	free(account_path);
 	free(tx_path);
 	load_filedata();
