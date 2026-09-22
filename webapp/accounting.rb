@@ -371,7 +371,7 @@ def route_request(client_socket)
 	if content_length > 0
 		if content_length > 2048
 			msg = "Request body to large. Must be <2048 bytes."
-			out = "HTTP/1.1 422\r\nContent-Type:text/plain\r\nContent-Length:#{msg.size}\r\n\r\n#{msg}"
+			out = "HTTP/1.1 413\r\nContent-Type:text/plain\r\nContent-Length:#{msg.size}\r\n\r\n#{msg}"
 			return out
 		end
 		body = client_socket.read(content_length)

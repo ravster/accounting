@@ -1041,15 +1041,6 @@ threadpool_worker(void* arg) {
 	httpContext* ctx;
 	ctx = &requests[thread_idx];
 
-	// TODO right now we replicate HTTP1.0 by closing every HTTP connection after giving the response to the
-	// browser. This is bad. HTTP1.1 allows for persistent connections, and we should use it. Each thread should
-	// hold on to it's client socket and do the recv() call in a loop. Browsers already reuse HTTP 1.1 conns,
-	// so we just need to recv() on the conn till we get more information. Set a timeout of 5 minutes to
-	// kill the connection if we get no data.
-	//
-	// Note that keeping connections open requires that we have a multi-threaded program. So much for the plan
-	// of switching to a single-thread. Oh well. If the world has made keep-alive a default expectation, I
-	// should roll with it, and not be too much of a hipster.
 	while (1) {
 		sem_wait(client_socket_queue.sem); // Apparently semaphores just don't have spurious wakeups. Nice.
 		int client_socket = lfq_pop(&client_socket_queue);
@@ -1061,7 +1052,6 @@ threadpool_worker(void* arg) {
 			close(client_socket);
 			return 0;
 		}
-		// We got a client socket from the main thread. Now we have to serve this client multiple times till the client times out or closes the conn.
 
 		while (1) {
 			httpContext_clear(ctx);
