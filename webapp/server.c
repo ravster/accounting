@@ -607,7 +607,7 @@ compare_strint_desc(const void* a, const void* b) {
 
 typedef struct {
 	u16 id;
-	int32_t total;
+	float total;
 	char* name;
 } BsAccTotal;
 typedef struct {
@@ -704,11 +704,11 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 		switch (accType) {
 			case ASSET:
 				written = snprintf(out+outLen, 89,
-						"<tr><td>%s</td><td>%d</td><td></td></tr>\n", it.name, it.total);
+						"<tr><td>%s</td><td>%.2f</td><td></td></tr>\n", it.name, it.total);
 				break;
 			case LIABILITY:
 				written = snprintf(out+outLen, 89,
-						"<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total);
+						"<tr><td>%s</td><td></td><td>%.2f</td></tr>\n", it.name, it.total);
 				break;
 			default:
 				printf("Shouldn't have gotten to this default case.\n");
