@@ -528,13 +528,19 @@ void url_decode(char* str) {
 
 void
 calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* nextLink, const char* getP) {
-	auto getPresult = sscanf(getP, "m=%hd&y=%hd", month, year);
-	if (getPresult != 2) {
+	char* mStr = params_get_newstr((char*)getP, "m");
+	char* yStr = params_get_newstr((char*)getP, "y");
+	if ((mStr == NULL) || (yStr == NULL)) {
 		auto t1 = time(NULL); // Use current month & year
 		auto* t2 = localtime(&t1);
 		*year = t2->tm_year + 1900;
 		*month = t2->tm_mon+ 1;
+	} else {
+		*month = atoi(mStr);
+		*year = atoi(yStr);
 	}
+	free(mStr);
+	free(yStr);
 	*start = (*year*10000) + (*month * 100) + 1;
 	auto endMonth = *month + 1;
 	auto endYear = *year;
