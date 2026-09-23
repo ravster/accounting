@@ -876,16 +876,6 @@ createAccount(httpContext* request) {
 	return;
 }
 
-void
-testPost(httpContext* req) {
-	char* a1;
-	char* bigText = params_get_newstr(req->postP, "note");
-	char* a2 = strdup(bigText);
-	url_decode(a2);
-	asprintf(&a1, "<p>got this:%s</p> <p>After url-decoding it is:%s</p>", bigText, a2);
-	write_to_client(req, 200, a1);
-	free(a1);
-}
 
 void
 listLedger(httpContext* request) {
@@ -1029,9 +1019,6 @@ handle_request(httpContext* request) {
 			break;
 		case 6:
 			balanceSheet(request);
-			break;
-		case 7:
-			testPost(request);
 			break;
 		default:
 			write_to_client(request, 404, "Not found");
