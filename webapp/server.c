@@ -528,13 +528,19 @@ void url_decode(char* str) {
 
 void
 calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* nextLink, const char* getP) {
-	auto getPresult = sscanf(getP, "m=%hd&y=%hd", month, year);
-	if (getPresult != 2) {
+	auto mStr = params_get_newstr((char*)getP, "m");
+	auto yStr = params_get_newstr((char*)getP, "y");
+	if ((mStr == NULL) || (yStr == NULL)) {
 		auto t1 = time(NULL); // Use current month & year
 		auto* t2 = localtime(&t1);
 		*year = t2->tm_year + 1900;
 		*month = t2->tm_mon+ 1;
+	} else {
+		*month = atoi(mStr);
+		*year = atoi(yStr);
 	}
+	free(mStr);
+	free(yStr);
 	*start = (*year*10000) + (*month * 100) + 1;
 	auto endMonth = *month + 1;
 	auto endYear = *year;
@@ -601,7 +607,7 @@ compare_strint_desc(const void* a, const void* b) {
 
 typedef struct {
 	u16 id;
-	int32_t total;
+	float total;
 	char* name;
 } BsAccTotal;
 typedef struct {
@@ -698,17 +704,17 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 		switch (accType) {
 			case ASSET:
 				written = snprintf(out+outLen, 89,
-						"<tr><td>%s</td><td>%d</td><td></td></tr>\n", it.name, it.total);
+						"<tr><td>%s</td><td>%.2f</td><td></td></tr>\n", it.name, it.total);
 				break;
 			case LIABILITY:
 				written = snprintf(out+outLen, 89,
-						"<tr><td>%s</td><td></td><td>%d</td></tr>\n", it.name, it.total);
+						"<tr><td>%s</td><td></td><td>%.2f</td></tr>\n", it.name, it.total);
 				break;
 			default:
 				printf("Shouldn't have gotten to this default case.\n");
 		}
 		if (written > 89) {
-			printf("snprintf fail. name=%s total=%u\n", it.name, it.total);
+			printf("snprintf fail. name=%s total=%f\n", it.name, it.total);
 		}
 		outLen += written;
 	}
@@ -822,8 +828,7 @@ createLedgerEntry(httpContext* request) {
 		return;
 	}
 	// TODO Check debit and credit id map to actual accounts
-	Tx* lastTx = &Txs[Txs[0].id];
-	u16 newId = lastTx->id + 1;
+	u16 newId = Txs[0].id + 1;
 	time_t t1 = time(NULL);
 	struct tm* t2 = localtime(&t1);
 	char timeBuf[9];
@@ -870,16 +875,6 @@ createAccount(httpContext* request) {
 	return;
 }
 
-void
-testPost(httpContext* req) {
-	char* a1;
-	char* bigText = params_get_newstr(req->postP, "note");
-	char* a2 = strdup(bigText);
-	url_decode(a2);
-	asprintf(&a1, "<p>got this:%s</p> <p>After url-decoding it is:%s</p>", bigText, a2);
-	write_to_client(req, 200, a1);
-	free(a1);
-}
 
 void
 listLedger(httpContext* request) {
@@ -908,12 +903,6 @@ listAccounts(httpContext* request) {
 	free(a1);
 }
 
-void
-homePage(httpContext* request) {
-	local_persist char* body;
-	if (!body) { body = read_file_newstr("templates/home.html"); }
-	write_to_client(request, 200, body);
-}
 
 void
 balanceSheet(httpContext* request) {
@@ -1003,9 +992,6 @@ handle_request(httpContext* request) {
 	}
 
 	switch (request->route) {
-		case 0:
-			homePage(request);
-			break;
 		case 1:
 			listLedger(request);
 			break;
@@ -1023,9 +1009,6 @@ handle_request(httpContext* request) {
 			break;
 		case 6:
 			balanceSheet(request);
-			break;
-		case 7:
-			testPost(request);
 			break;
 		default:
 			write_to_client(request, 404, "Not found");
