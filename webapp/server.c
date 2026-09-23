@@ -714,7 +714,7 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 				printf("Shouldn't have gotten to this default case.\n");
 		}
 		if (written > 89) {
-			printf("snprintf fail. name=%s total=%u\n", it.name, it.total);
+			printf("snprintf fail. name=%s total=%f\n", it.name, it.total);
 		}
 		outLen += written;
 	}
