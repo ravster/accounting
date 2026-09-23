@@ -528,8 +528,8 @@ void url_decode(char* str) {
 
 void
 calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* nextLink, const char* getP) {
-	char* mStr = params_get_newstr((char*)getP, "m");
-	char* yStr = params_get_newstr((char*)getP, "y");
+	auto mStr = params_get_newstr((char*)getP, "m");
+	auto yStr = params_get_newstr((char*)getP, "y");
 	if ((mStr == NULL) || (yStr == NULL)) {
 		auto t1 = time(NULL); // Use current month & year
 		auto* t2 = localtime(&t1);
