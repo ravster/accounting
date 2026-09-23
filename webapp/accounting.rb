@@ -334,8 +334,7 @@ def createLedgerEntry(client_socket, body)
 		return;
 	end
 	# TODO Check debit and credit id map to actual accounts
-	lastTx = $txs.last
-	newId = lastTx.id + 1
+	newId = $txs.size + 1
 	now = Time.now.strftime("%Y%m%d")
 	newTx = Tx.new(newId, amount.to_f, note, debitID.to_i, creditID.to_i, now.to_i)
 	$txs << newTx

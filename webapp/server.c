@@ -828,8 +828,7 @@ createLedgerEntry(httpContext* request) {
 		return;
 	}
 	// TODO Check debit and credit id map to actual accounts
-	Tx* lastTx = &Txs[Txs[0].id];
-	u16 newId = lastTx->id + 1;
+	u16 newId = Txs[0].id + 1;
 	time_t t1 = time(NULL);
 	struct tm* t2 = localtime(&t1);
 	char timeBuf[9];
