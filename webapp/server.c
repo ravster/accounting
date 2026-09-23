@@ -904,12 +904,6 @@ listAccounts(httpContext* request) {
 	free(a1);
 }
 
-void
-homePage(httpContext* request) {
-	local_persist char* body;
-	if (!body) { body = read_file_newstr("templates/home.html"); }
-	write_to_client(request, 200, body);
-}
 
 void
 balanceSheet(httpContext* request) {
@@ -999,9 +993,6 @@ handle_request(httpContext* request) {
 	}
 
 	switch (request->route) {
-		case 0:
-			homePage(request);
-			break;
 		case 1:
 			listLedger(request);
 			break;
