@@ -76,6 +76,14 @@ typedef struct {
 } Account;
 global_variable Account *Accs;
 
+int
+compare_Accs_name_asc(const void* a, const void* b) {
+	auto aa = (Account*)a;
+	auto ab = (Account*)b;
+	return strcmp(aa->name, ab->name);
+}
+
+// Add an Account to the global array Accs. And then sort it by name ASC.
 void
 acc_append(u16 id, char* name, u16 type) {
 	u16 *len = &Accs[0].id;
@@ -89,6 +97,7 @@ acc_append(u16 id, char* name, u16 type) {
 	new_acc->name = strdup(name);
 	new_acc->type = type;
 	(*len)++;
+	qsort(&Accs[1], *len, sizeof(Account), compare_Accs_name_asc);
 }
 
 int
@@ -467,9 +476,10 @@ ledger_newest_30_newstr() {
 char*
 account_selection_options_new() {
 	sstr* out = sstr_new(1024);
-	// TODO. local_persist across all threads. Calculated and cached after addAccount op.
+	// TODO. local_persist across all threads. Calculated and cached after addAccount op. And during writing we should sort ASC name too.
 	char* temp = calloc(1024, 1);
-	for (u16 i = 1; i <= Accs[0].id; i++) {
+	u16 accs_len = Accs[0].id;
+	for (u16 i = 1; i < accs_len; i++) {
 		auto acc = Accs[i];
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<option value=\"%hu\">%s</option>",
