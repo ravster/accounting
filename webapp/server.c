@@ -677,7 +677,8 @@ bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
 }
 
 void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
-	for (u16 i=1; i <= Txs[0].id; i++) {
+	auto len = Txs[0].id;
+	for (u16 i=1; i <= len; i++) {
 		auto tx = Txs[i];
 		if (tx.created_at > stop) { continue; }
 
@@ -837,6 +838,14 @@ createLedgerEntry(httpContext* request) {
 	char* amount = params_get_newstr(request->postP, "amount");
 	if ((debitID == NULL) || (creditID == NULL) || (note == NULL) || (amount == NULL)) {
 		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
+		free(debitID); free(creditID); free(note); free(amount);
+		// TODO change some of the above to thread_local static.
+		return;
+	}
+	auto debit_i = atoi(debitID);
+	auto credit_i = atoi(creditID);
+	if (debit_i == credit_i) {
+		write_to_client(request, 422, "debit_account_id & credit_account_id can't be the same");
 		free(debitID); free(creditID); free(note); free(amount);
 		return;
 	}
