@@ -473,28 +473,31 @@ ledger_newest_30_newstr() {
 	return out;
 }
 
+// Memoize the option-tags from Accs. If Accs changed, then recalc the tags.
 char*
-account_selection_options_new() {
-	sstr* out = sstr_new(1024);
-	// TODO. local_persist across all threads. Calculated and cached after addAccount op. And during writing we should sort ASC name too.
-	char* temp = calloc(1024, 1);
+account_selection_options() {
+	local_persist char *saved_out;
+	local_persist u16 *last_known_id;
 	u16 accs_len = Accs[0].id;
-	for (u16 i = 1; i < accs_len; i++) {
-		auto acc = Accs[i];
-		size_t written_to_temp = snprintf(temp, 1024,
-			"<option value=\"%hu\">%s</option>",
-			acc.id,
-			acc.name
-		);
-		if (written_to_temp >= 1024) {
-			printf("ERR: account_selection_options: temp truncated to 1024: %s\n", temp);
+	if ((last_known_id == NULL) || (*last_known_id != accs_len)) {
+		size_t total_length = accs_len * 90;
+		u16 remaining_length = total_length;
+		saved_out = realloc(saved_out, total_length);
+		u16 written = 0;
+		for (u16 i = 1; i <= accs_len; i++) {
+			auto acc = Accs[i];
+			size_t written_to_temp = snprintf(saved_out+written, remaining_length,
+					"<option value=\"%hu\">%s</option>",
+					acc.id, acc.name);
+			if (written_to_temp >= remaining_length) {
+				printf("ERR: account_selection_options: temp truncated to remaining_length: %s\n", saved_out); }
+			written += written_to_temp;
+			remaining_length -= written_to_temp;
 		}
-		sstr_append(out, temp);
+		last_known_id = malloc(sizeof(u16));
+		*last_known_id = Accs[accs_len].id;
 	}
-	char* out2 = strdup(out->buf);
-	free(temp);
-	free(out);
-	return out2;
+	return saved_out;
 }
 
 // Helper to convert a single hex character to its integer value
@@ -892,12 +895,10 @@ listLedger(httpContext* request) {
 	if (!body) { body = read_file_newstr("templates/ledger.html"); }
 	char* a1;
 	sstr* ln30 = ledger_newest_30_newstr();
-	char* aso = account_selection_options_new();
+	char* aso = account_selection_options();
 	asprintf(&a1, body, aso, aso, ln30->buf);
 	write_to_client(request, 200, a1);
-	sstr_free(ln30);
-	free(aso);
-	free(a1);
+	sstr_free(ln30); free(a1);
 }
 
 void
