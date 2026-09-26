@@ -15,7 +15,6 @@
 #define local_persist static
 #define global_variable static
 
-#define PORT 3002
 #define THREAD_POOL_SIZE 4
 // Queue size MUST be a power of 2. Makes ring-buffer-wrapping operations way easier.
 #define QUEUE_CAPACITY 64
@@ -1078,7 +1077,7 @@ threadpool_worker(void* arg) {
 }
 
 int
-listen_on_port() {
+listen_on_port(u16 port) {
 	int server_fd;
 	struct sockaddr_in address;
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1089,14 +1088,14 @@ listen_on_port() {
 
 	address.sin_family = AF_INET;
 	address.sin_addr.s_addr = INADDR_ANY;
-	address.sin_port = htons(PORT);
+	address.sin_port = htons(port);
 
 	if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
 		perror("CRITICAL ERROR. Bind failed. OS has probably locked the port in TIME_WAIT.");
 		exit(1);
 	}
 	listen(server_fd, 100);
-	printf("Server listening on port %d...\n", PORT);
+	printf("Server listening on port %d...\n", port);
 
 	return server_fd;
 }
@@ -1165,8 +1164,8 @@ handle_sigint(int sig) {
 
 int
 main(int argc, char** argv) {
-	if (argc != 2) {
-		printf("Are you sure about that?\nUsage:\n\tserver directory/containing/files/\n\n");
+	if (argc != 3) {
+		printf("Are you sure about that?\nUsage:\n\tserver 3002 directory/containing/files/\n\n");
 		exit(1);
 	}
 	struct sigaction sa;
@@ -1178,7 +1177,8 @@ main(int argc, char** argv) {
 		exit(1);
 	}
 
-	char* dirpath = argv[1];
+	u16 port = atoi(argv[1]);
+	char* dirpath = argv[2];
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
 	AccountFile = fopen(account_path, "r+");
@@ -1224,7 +1224,7 @@ main(int argc, char** argv) {
 	printf("Threadpool started with %d workers.\n", THREAD_POOL_SIZE);
 	// END threadpool setup. Should extract to func.
 
-	int server_fd = listen_on_port();
+	int server_fd = listen_on_port(port);
 	while (1) {
 		// Build up client socket.
 		struct sockaddr_in client_addr;

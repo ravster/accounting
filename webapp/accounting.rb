@@ -80,6 +80,7 @@ def account_selection_options_new
 	$accs.each { |acc|
 		$aso_memo << "<option value=\"#{acc.id}\">#{acc.name}</option>"
 	}
+	$aso_cache_key = $accs.size
 	$aso_memo
 end
 
@@ -325,9 +326,8 @@ def createAccount(client_socket, body)
 		return
 	end
 	newAcc = Acc.new(newAccountId, name2, type2)
-	$accs.sort_by! {|x| x.name}
-	# TODO write to a global that can be used by the memoizing funcs. I don't think Ruby has something like a function-local static variable.
 	$accs << newAcc
+	$accs.sort_by! {|x| x.name}
 	append_to_file(newAcc)
 	write_redirect(client_socket, 303, "/2")
 end
@@ -445,14 +445,16 @@ def handle_client_socket(client_socket)
 end
 
 def main(args)
-	dir = args[0]
+	port = args[0]
+	port_i = port.to_i
+	dir = args[1]
 	$acc_path = "#{dir}accounts.tsv"
 	$tx_path =  "#{dir}transactions.tsv"
 	err = load_filedata($acc_path, $tx_path)
 	if err
 		exit(1)
 	end
-	server = TCPServer.new("localhost", 3003)
+	server = TCPServer.new("localhost", port_i)
 	loop do
 		Thread.start(server.accept) do |client_socket|
 			puts "New thread"
