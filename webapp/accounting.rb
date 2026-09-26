@@ -10,6 +10,7 @@ Tx = Struct.new(:id, :amount, :note, :debit, :credit, :created)
 BsAcc = Struct.new(:id, :name, :total)
 
 def append_to_file(input)
+	# TODO save the open file handle. Reopening the file each time is gross & costly.
 	case input
 	when Acc
 		File.open($acc_path, "a") { |f|
@@ -34,6 +35,7 @@ def load_filedata(acc_path, tx_path)
 		type = type.to_i
 		$accs << Acc.new(id, name, type)
 	end
+	$accs.sort_by! {|x| x.name}
 	File.foreach(tx_path) do |line|
 		match = line.match(/(\d+)\t([\d.]+)\t([^\t]+)\t(\d+)\t(\d+)\t(\d+)/)
 		unless match
@@ -69,12 +71,16 @@ def ledger_newest_30_newstr
 	out
 end
 
+$aso_memo = ""
+$aso_cache_key = -1
 def account_selection_options_new
-	out = ""
+	if ($aso_cache_key == $accs.size)
+		return $aso_memo
+	end
 	$accs.each { |acc|
-		out << "<option value=\"#{acc.id}\">#{acc.name}</option>"
+		$aso_memo << "<option value=\"#{acc.id}\">#{acc.name}</option>"
 	}
-	out
+	$aso_memo
 end
 
 def write_to_client(client_socket, status, body)
@@ -90,6 +96,7 @@ def write_redirect(client_socket, status, newLoc)
 end
 
 def tr_of_every_account
+	# TODO memoize
 	acc_types = %w[ Income Expense Asset Liability ]
 	out = ""
 	$accs.each { |acc|
@@ -230,6 +237,7 @@ def listLedger(client_socket, first_line)
 end
 
 def listAccounts(client_socket)
+	# TODO memoize
 	body = File.read("templates/listAccounts.html");
 	trs = tr_of_every_account();
 	a1 = sprintf(body, trs)
@@ -317,6 +325,8 @@ def createAccount(client_socket, body)
 		return
 	end
 	newAcc = Acc.new(newAccountId, name2, type2)
+	$accs.sort_by! {|x| x.name}
+	# TODO write to a global that can be used by the memoizing funcs. I don't think Ruby has something like a function-local static variable.
 	$accs << newAcc
 	append_to_file(newAcc)
 	write_redirect(client_socket, 303, "/2")
@@ -333,10 +343,16 @@ def createLedgerEntry(client_socket, body)
 		write_to_client(client_socket, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
 		return;
 	end
+	debit_i = debitID.to_i
+	credit_i = creditID.to_i
+	if (debit_i == credit_i)
+		write_to_client(client_socket, 422, "debit_account_id & credit_account_id can't be the same.");
+		return;
+	end
 	# TODO Check debit and credit id map to actual accounts
 	newId = $txs.size + 1
 	now = Time.now.strftime("%Y%m%d")
-	newTx = Tx.new(newId, amount.to_f, note, debitID.to_i, creditID.to_i, now.to_i)
+	newTx = Tx.new(newId, amount.to_f, note, debit_i, credit_i, now.to_i)
 	$txs << newTx
 	append_to_file(newTx)
 	write_redirect(client_socket, 303, "/1");
