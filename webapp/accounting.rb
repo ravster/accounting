@@ -71,19 +71,6 @@ def ledger_newest_30_newstr
 	out
 end
 
-$aso_memo = ""
-$aso_cache_key = -1
-def account_selection_options_new
-	if ($aso_cache_key == $accs.size)
-		return $aso_memo
-	end
-	$accs.each { |acc|
-		$aso_memo << "<option value=\"#{acc.id}\">#{acc.name}</option>"
-	}
-	$aso_cache_key = $accs.size
-	$aso_memo
-end
-
 def write_to_client(client_socket, status, body)
 	full_response = sprintf("HTTP/1.1 %d \r\nContent-Length: %d\r\n\r\n%s",
 		status, body.size, body)
@@ -229,10 +216,18 @@ end
 # END 1 layer below the request handlers
 
 # BEGIN handlers and router
+$aso_memo = ""
+$aso_cache_key = -1
 def listLedger(client_socket, first_line)
 	template = File.read("templates/ledger.html")
 	ln30 = ledger_newest_30_newstr();
-	aso = account_selection_options_new();
+	if ($aso_cache_key != $accs.size)
+		$aso_memo = ""
+		$accs.each { |acc| $aso_memo << "<option value=\"#{acc.id}\">#{acc.name}</option>" }
+		$aso_cache_key = $accs.size
+	end
+	aso = $aso_memo
+
 	body = sprintf(template, aso, aso, ln30)
 	write_to_client(client_socket, 200, body);
 end
