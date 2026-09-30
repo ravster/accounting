@@ -440,13 +440,21 @@ ledger_newest_30_newstr() {
 	// Should be local_persist that is shared between all threads. Actually, addTx should write this
 	// whole thing to memory, and we shouldn't recalc this every page-load.
 	char* temp = calloc(1024, 1);
+	Account (^account_with_id)(uint16_t) = ^(uint16_t x) {
+		auto len = Accs[0].id;
+		for (int i = 1; i<=len; i++) {
+			auto acc = Accs[i];
+			if (acc.id == x) { return acc; }
+		}
+		return Accs[0];
+	};
 	auto total_rows = 30;
 	auto *txLen = &Txs[0].id;
 	if (*txLen < 30) { total_rows = *txLen; }
 	for (int i = *txLen; i > *txLen - total_rows; i--) {
 		auto tx = Txs[i];
-		auto debit_acct_name = Accs[tx.debit_account_id].name;
-		auto credit_acct_name = Accs[tx.credit_account_id].name;
+		auto debit_acct_name = account_with_id(tx.debit_account_id).name;
+		auto credit_acct_name = account_with_id(tx.credit_account_id).name;
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<tr>"
 			  "<td>%hu</td>"

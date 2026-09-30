@@ -60,7 +60,7 @@ handle_client_socket :: proc(sock: net.TCP_Socket) {
 			break
 		}
 		fmt.printfln("Received this from TCP:%s", string(buf[:bytes_read]))
-		// parse_get params
+		// TODO parse_get params
 		// parse_body post params. Requires reading whole http body.
 		// parse route
 		// hand to endpoint handler inside a switch. Pass in only the params type that is needed.
