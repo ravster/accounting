@@ -14,11 +14,7 @@
 
 #define local_persist static
 #define global_variable static
-
 #define THREAD_POOL_SIZE 4
-// Queue size MUST be a power of 2. Makes ring-buffer-wrapping operations way easier.
-#define QUEUE_CAPACITY 64
-#define QUEUE_MASK (QUEUE_CAPACITY - 1)
 
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -76,7 +72,7 @@ typedef struct {
 global_variable Account *Accs;
 
 int
-compare_Accs_name_asc(const void* a, const void* b) {
+acc_compare_name_asc(const void* a, const void* b) {
 	auto aa = (Account*)a;
 	auto ab = (Account*)b;
 	return strcmp(aa->name, ab->name);
@@ -96,11 +92,11 @@ acc_append(u16 id, char* name, u16 type) {
 	new_acc->name = strdup(name);
 	new_acc->type = type;
 	(*len)++;
-	qsort(&Accs[1], *len, sizeof(Account), compare_Accs_name_asc);
+	qsort(&Accs[1], *len, sizeof(Account), acc_compare_name_asc);
 }
 
 int
-acc_find_name(char* needle) {
+acc_find_by_name(char* needle) {
 	for (int i = 1; i <= Accs[0].id; i++) {
 		if (strcmp(Accs[i].name, needle) == 0) {
 			return 1;
@@ -166,89 +162,57 @@ sstr_set(sstr* s, char* data) {
 	s->buf[0] = 0;
 	sstr_append(s, data);
 }
-
 // END string implementation
 
-// BEGIN lock-free queue implementation
-// Not using the latest hardware is a moral failing. You are essentially nerfing your own hardware simply to think less. Don't be lazy. It's like buying a 2026 machine and then running it in 2006 mode. So wasteful.
+// BEGIN socket_queue_t
 typedef struct {
-	int buffer[QUEUE_CAPACITY];
-	// These numbers will constantly grow through the life of the program. They will not be wrapped back to zero by the application. To get the actual index in the buffer, we'll push each size_t through the QUEUE_MASK. Bit math is mind-bending and awesome.
-	atomic_size_t head_ctr; // Consumers pop from here.
-	atomic_size_t tail_ctr; // Producer pushes here.
-	sem_t* sem;
-} lock_free_queue;
+	int sockets[16];
+	int head;
+	int tail;
+	int count;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+} socket_queue_t;
+global_variable socket_queue_t SocketQueue;
 
-// MUST be done by only 1 thread.
 void
-lfq_init(lock_free_queue* q) {
-	atomic_init(&q->head_ctr, 0);
-	atomic_init(&q->tail_ctr, 0);
-	sem_unlink("/ravi1");
-	q->sem = sem_open("/ravi1", O_CREAT, 0644, 0);
-	if (q->sem == SEM_FAILED) {
-		printf("SEM_OPEN failed.\n");
-		exit(1);
-	}
+socketqueue_init(socket_queue_t *q) {
+	q->head = 0;
+	q->tail = 0;
+	q->count = 0;
+	pthread_mutex_init(&q->mutex, NULL);
+	pthread_cond_init(&q->cond, NULL);
 }
 
 void
-lfq_destroy(lock_free_queue* q) {
-	if (q->sem != SEM_FAILED) {
-		sem_close(q->sem);
-		sem_unlink("/ravi1");
+socketqueue_push(socket_queue_t *queue, int socket) {
+	pthread_mutex_lock(&queue->mutex);
+	if (queue->count < 16) {
+		queue->sockets[queue->tail] = socket;
+		queue->tail = (queue->tail + 1) % 16; // This is how it wraps around.
+		queue->count++;
+		pthread_cond_signal(&queue->cond); // Wake one thread.
+	} else {
+		printf("SocketQueue is full. Can't serve this client.\n");
 	}
+	pthread_mutex_unlock(&queue->mutex);
 }
 
-// Push to the tail. Think of it like people coming lining up at a queue at TimHortons.
-// Single Producer Multiple Consumers (SPMC)
-// This is done only by one thread in this program, so we can safely use more relaxed memory_order_* settings.
 int
-lfq_push(lock_free_queue* q, int newVal) {
-	// _relaxed gives us the fastest read from the local L1/L2 cache. In a generic program, this might be an outdated value. The atomic_store_explicit below will double-check this with the freshest value across all caches of all processors, so it isn't terribly unsafe.
-	// Of course, because this program is SPMC, we know that we will get the correct value.
-	auto current_tail_ctr = atomic_load_explicit(&q->tail_ctr, memory_order_relaxed);
-	// _acquire will force this core to load up the freshest value of this variable from across all caches. this is done transparently by the hardware.
-	// Think of think as acquiring the latest version of a variable from a source of truth. Or think of it as doing a git pull to get the latest commit in a branch.
-	auto current_head_ctr = atomic_load_explicit(&q->head_ctr, memory_order_acquire);
-	if ((current_tail_ctr - current_head_ctr) >= QUEUE_CAPACITY) {
-		return 0; // TODO bad. queue full.
-			// Drop this socket connection, main thread.
+socketqueue_pop(socket_queue_t *q) {
+	pthread_mutex_lock(&q->mutex);
+	while (q->count == 0){ // Guard against spurious wakeups
+		pthread_cond_wait(&q->cond, &q->mutex);
 	}
-	// Usually we'd worry about a race condition here. But because SPMC, we don't have that concern.
-	q->buffer[current_tail_ctr & QUEUE_MASK] = newVal;
-	// Memory writes in this thread that are above this line in the code WILL NOT be reordered by the CPU to be after this line below.
-	// _release flushes the write the shared L3 cache, and signals to all the other processors that the value of this variable has changed.
-	// Think of it like doing a git push to a remote.
-	atomic_store_explicit(&q->tail_ctr, current_tail_ctr + 1, memory_order_release);
-	sem_post(q->sem); // Increment the semaphore, so the kernel wakes up a thread.
-	return 1;
+
+	int sock = q->sockets[q->head];
+	q->head = (q->head + 1) % 16;
+	q->count--;
+
+	pthread_mutex_unlock(&q->mutex);
+	return sock;
 }
-
-// Pop from the head. The person at the front of the queue gets served next at TimHortons.
-int
-lfq_pop(lock_free_queue* q) {
-	auto current_head_ctr = atomic_load_explicit(&q->head_ctr, memory_order_relaxed);
-	while (true) {
-		auto current_tail_ctr = atomic_load_explicit(&q->tail_ctr, memory_order_acquire);
-		if (current_head_ctr == current_tail_ctr) {
-			return 0; // Nothing found
-		}
-		auto possible_correct_head_value = q->buffer[current_head_ctr & QUEUE_MASK];
-		auto is_written = atomic_compare_exchange_weak_explicit(
-				&q->head_ctr, &current_head_ctr, current_head_ctr + 1,
-				memory_order_release,
-				memory_order_relaxed
-				);
-		if (is_written) {
-			return possible_correct_head_value;
-		} // If not written, then CAS failed. Some other consumer must have gotten this particular possible-head-value a few nanoseconds earlier. Redo the loop and try again. Spinloop this thread. The atomic func has updated current_head_ctr value so it doesn't need to be refreshed in the loop.
-	}
-}
-
-global_variable lock_free_queue client_socket_queue = {0};
-
-// END lock_free queue implementation
+// END socket_queue_t
 
 void
 printStrInts(StrInt* in) {
@@ -270,6 +234,8 @@ printTxs(Tx* in) {
 	}
 }
 
+// TODO asprintf & strndup here are bad. Linear lookup not so bad, but there's a problem if looking for the last KV. Switch to parsing this all once, and produce either an array of KV structs (pointers can be to the existing data with the '&' & '=' converted to '0'), or a struct of 2 arrays, one of Ks and one of Vs. Then the lookup runs through the Ks, and pulls the V of the matching index. Of course, it should be thread_local.
+// Probably just use AoS, because SoA only helps when working with thousands of entities and this program will never get to that point for a single-user.
 char*
 params_get_newstr(char* haystack, char* needle) {
 	if (strlen(haystack) == 0) { return NULL; }
@@ -854,7 +820,7 @@ createAccount(httpContext* request) {
 	}
 	char* name2 = strdup(name);
 	url_decode(name2);
-	int is_name_found = acc_find_name(name2);
+	int is_name_found = acc_find_by_name(name2);
 	if (is_name_found) {
 		char* out;
 		asprintf(&out, "The account name:%s is already taken.", name2);
@@ -1049,10 +1015,12 @@ threadpool_worker(void* arg) {
 	ctx = &requests[thread_idx];
 
 	while (1) {
-		sem_wait(client_socket_queue.sem); // Apparently semaphores just don't have spurious wakeups. Nice.
-		int client_socket = lfq_pop(&client_socket_queue);
+		int client_socket = socketqueue_pop(&SocketQueue);
+
+		// 2m timout for client_socket.
 		struct timeval timeout;
 		timeout.tv_sec = 120;
+		timeout.tv_usec = 0;
 		auto sso = setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 		if (sso < 0) {
 			printf("Couldn't set the socket timeout.\n");
@@ -1182,6 +1150,7 @@ main(int argc, char** argv) {
 		exit(1);
 	}
 
+	socketqueue_init(&SocketQueue);
 	u16 port = atoi(argv[1]);
 	char* dirpath = argv[2];
 	char* account_path;
@@ -1198,7 +1167,6 @@ main(int argc, char** argv) {
 	free(tx_path);
 	load_filedata();
 
-	lfq_init(&client_socket_queue);
 	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
 		// TODO Switch to having each thread-worker declare it's own thread_local static var of this. This doesn't need to be a global.
 		httpContext *req = &requests[i];
@@ -1221,7 +1189,6 @@ main(int argc, char** argv) {
 				thread_idx);
 		if (err != 0) {
 			perror("Couldn't create thread in pool!\n");
-			lfq_destroy(&client_socket_queue);
 			return 1;
 		}
 		pthread_detach(thread_pool[i]);
@@ -1240,10 +1207,10 @@ main(int argc, char** argv) {
 			perror("accept failed");
 			continue;
 		}
-		// Push client_socket file-descriptor directly onto queue that is consumed by the thread-pool.
-		lfq_push(&client_socket_queue, client_socket);
+
+		// Write to queue
+		socketqueue_push(&SocketQueue, client_socket);
 	}
-	lfq_destroy(&client_socket_queue);
 	fclose(AccountFile);
 	fclose(TxFile);
 	return 0;
