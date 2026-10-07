@@ -107,6 +107,16 @@ acc_find_by_name(char* needle) {
 	return 0;
 }
 
+int
+acc_find_by_id(u16 needle) {
+	for (int i = 1; i <= Accs[0].id; i++) {
+		if (Accs[i].id == needle) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 void
 acc_append_file(u16 id, char* name, u16 type) {
 	fprintf(AccountFile, "%hu\t%s\t%hu\n", id, name, type);
@@ -808,7 +818,20 @@ createLedgerEntry(httpContext* request) {
 		free(debitID); free(creditID); free(note); free(amount);
 		return;
 	}
-	// TODO Check debit and credit id map to actual accounts
+	if (!acc_find_by_id((u16)debit_i)) {
+		char* out;
+		asprintf(&out, "debit_account_id=%d doesn't map to an existing account", debit_i);
+		write_to_client(request, 422, out);
+		free(out); free(debitID); free(creditID); free(note); free(amount);
+		return;
+	}
+	if (!acc_find_by_id((u16)credit_i)) {
+		char* out;
+		asprintf(&out, "credit_account_id=%d doesn't map to an existing account", credit_i);
+		write_to_client(request, 422, out);
+		free(out); free(debitID); free(creditID); free(note); free(amount);
+		return;
+	}
 	u16 newId = Txs[0].id + 1;
 	time_t t1 = time(NULL);
 	struct tm* t2 = localtime(&t1);
