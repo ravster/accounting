@@ -247,7 +247,7 @@ params_get_newstr(char* haystack, char* needle) {
 	if (found == NULL) { return NULL; }
 	char* value = found + strlen(needle_with_US);
 	char* record_end = strchr(value, '&');
-	char* out = strndup(value, record_end - value);
+	char* out = strndup(value, (size_t)(record_end - value));
 	free(needle_with_US);
 	return out;
 }
