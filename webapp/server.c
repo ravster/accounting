@@ -704,6 +704,16 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 	return out;
 }
 
+global_variable char* ListAccountsCache;
+void
+listAccountsCache_write() {
+	local_persist char* template;
+	if (!template) { template = read_file_newstr("templates/listAccounts.html"); }
+	free(ListAccountsCache);
+	auto trs = tr_of_every_account();
+	asprintf(&ListAccountsCache, template, trs->buf);
+	sstr_free(trs);
+}
 // END Layer below request handlers.
 
 void
@@ -876,9 +886,9 @@ createAccount(httpContext* request) {
 	acc_append_file(new_account_id, name2, (u16)type_i);
 	write_redirect(request, 303, "/2");
 	free(name2); free(name); free(type);
+	listAccountsCache_write();
 	return;
 }
-
 
 void
 listLedger(httpContext* request) {
@@ -917,17 +927,11 @@ listLedger(httpContext* request) {
 
 void
 listAccounts(httpContext* request) {
-	local_persist char* body;
-	if (!body) { body = read_file_newstr("templates/listAccounts.html"); }
-	char* a1;
-	// TODO This doesn't change on each page load, so we shouldn't recalc this on each page load. We should cache the new value of this after the addAccount operation instead.
-	sstr* trs = tr_of_every_account();
-	asprintf(&a1, body, trs->buf);
-	write_to_client(request, 200, a1);
-	sstr_free(trs);
-	free(a1);
+	if (ListAccountsCache == NULL) {
+		listAccountsCache_write();
+	}
+	write_to_client(request, 200, ListAccountsCache);
 }
-
 
 void
 balanceSheet(httpContext* request) {
