@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <signal.h>
 #include <stdatomic.h>
 #include <semaphore.h>
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <arpa/inet.h>
@@ -44,9 +46,9 @@ tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_acc
 	u16 *cap = &Txs[0].debit_account_id;
 	if (*len == *cap) {
 		*cap *= 2;
-		Txs = realloc(Txs, *cap);
+		Txs = realloc(Txs, *cap * sizeof(Tx));
 	}
-	auto new_tx = &Txs[*len + 1];
+	Tx* new_tx = &Txs[*len + 1];
 	new_tx->id = id;
 	new_tx->amount = amount;
 	new_tx->note = strdup(note);
@@ -73,8 +75,8 @@ global_variable Account *Accs;
 
 int
 acc_compare_name_asc(const void* a, const void* b) {
-	auto aa = (Account*)a;
-	auto ab = (Account*)b;
+	Account* aa = (Account*)a;
+	Account* ab = (Account*)b;
 	return strcmp(aa->name, ab->name);
 }
 
@@ -85,9 +87,9 @@ acc_append(u16 id, char* name, u16 type) {
 	u16 *cap = &Accs[0].type;
 	if (*len == *cap) {
 		*cap *= 2;
-		Accs = realloc(Accs, *cap);
+		Accs = realloc(Accs, *cap * sizeof(Account));
 	}
-	auto new_acc = &Accs[*len + 1];
+	Account* new_acc = &Accs[*len + 1];
 	new_acc->id = id;
 	new_acc->name = strdup(name);
 	new_acc->type = type;
@@ -216,21 +218,21 @@ socketqueue_pop(socket_queue_t *q) {
 
 void
 printStrInts(StrInt* in) {
-	auto len = in[0].int1;
+	int len = in[0].int1;
 	printf("StrInt: len=%d\n  Name\tInt1\tTotal\n", len);
 	for (int i = 1; i <= len; i++) {
-		auto it = in[i];
+		StrInt it = in[i];
 		printf("  %s\t%d\t%f\n", it.name, it.int1, it.total);
 	}
 }
 
 void
 printTxs(Tx* in) {
-	auto len = in[0].id;
-	printf("Tx: len=%d cap=%d\n  Name\tInt1\tTotal\n", len, in[0].debit_account_id);
+	u16 len = in[0].id;
+	printf("Tx: len=%hu cap=%hu\n  Name\tInt1\tTotal\n", len, in[0].debit_account_id);
 	for (int i = 1; i <= len; i++) {
-		auto it = in[i];
-		printf("%.2f\t%s\t%d\t%d\t%d\n", it.amount, it.note, it.debit_account_id, it.credit_account_id, it.created_at);
+		Tx it = in[i];
+		printf("%.2f\t%s\t%hu\t%hu\t%u\n", it.amount, it.note, it.debit_account_id, it.credit_account_id, it.created_at);
 	}
 }
 
@@ -306,10 +308,10 @@ httpContext requests[4];
 
 int // err
 write_all(int socket, char* buffer, size_t len) {
-	auto ptr = buffer;
+	char* ptr = buffer;
 	size_t written = 0;
 	while (written < len) {
-		auto just_wrote = write(socket, ptr, len - written);
+		ssize_t just_wrote = write(socket, ptr, len - written);
 		if (just_wrote < 1) {
 			printf("write_all. Failed. just_wrote=%zd\n", just_wrote);
 			return 1;
@@ -327,7 +329,7 @@ parse_route(u16 *route, char *endpoint) {
 	}
 	char* start = endpoint +1;
 	char* endptr;
-	auto out = strtoul(start, &endptr, 10);
+	unsigned long out = strtoul(start, &endptr, 10);
 	if (start == endptr) {
 		return 0;
 	}
@@ -386,9 +388,9 @@ tr_of_every_account() {
 	local_persist thread_local char* temp;
 	if (temp == NULL) { temp = malloc(90); }
 	for (u16 i = 1; i <= Accs[0].id; i++) {
-		auto acc = Accs[i];
+		Account acc = Accs[i];
 		char* type = acc_types[acc.type];
-		auto written = snprintf(temp, 90,
+		int written = snprintf(temp, 90,
 			"<tr>" "<td>%hu</td>" "<td>%s</td>" "<td>%s</td>" "</tr>\n",
 			acc.id, acc.name, type);
 		if (written >= 90) {
@@ -407,20 +409,20 @@ ledger_newest_30_newstr() {
 	// whole thing to memory, and we shouldn't recalc this every page-load.
 	char* temp = calloc(1024, 1);
 	Account (^account_with_id)(uint16_t) = ^(uint16_t x) {
-		auto len = Accs[0].id;
+		u16 len = Accs[0].id;
 		for (int i = 1; i<=len; i++) {
-			auto acc = Accs[i];
+			Account acc = Accs[i];
 			if (acc.id == x) { return acc; }
 		}
 		return Accs[0];
 	};
-	auto total_rows = 30;
-	auto *txLen = &Txs[0].id;
+	int total_rows = 30;
+	u16 *txLen = &Txs[0].id;
 	if (*txLen < 30) { total_rows = *txLen; }
 	for (int i = *txLen; i > *txLen - total_rows; i--) {
-		auto tx = Txs[i];
-		auto debit_acct_name = account_with_id(tx.debit_account_id).name;
-		auto credit_acct_name = account_with_id(tx.credit_account_id).name;
+		Tx tx = Txs[i];
+		char* debit_acct_name = account_with_id(tx.debit_account_id).name;
+		char* credit_acct_name = account_with_id(tx.credit_account_id).name;
 		size_t written_to_temp = snprintf(temp, 1024,
 			"<tr>"
 			  "<td>%hu</td>"
@@ -488,11 +490,11 @@ void url_decode(char* str) {
 
 void
 calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* nextLink, const char* getP) {
-	auto mStr = params_get_newstr((char*)getP, "m");
-	auto yStr = params_get_newstr((char*)getP, "y");
+	char* mStr = params_get_newstr((char*)getP, "m");
+	char* yStr = params_get_newstr((char*)getP, "y");
 	if ((mStr == NULL) || (yStr == NULL)) {
-		auto t1 = time(NULL); // Use current month & year
-		auto* t2 = localtime(&t1);
+		time_t t1 = time(NULL); // Use current month & year
+		struct tm* t2 = localtime(&t1);
 		*year = t2->tm_year + 1900;
 		*month = t2->tm_mon+ 1;
 	} else {
@@ -502,8 +504,8 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* n
 	free(mStr);
 	free(yStr);
 	*start = (*year*10000) + (*month * 100) + 1;
-	auto endMonth = *month + 1;
-	auto endYear = *year;
+	u16 endMonth = *month + 1;
+	u16 endYear = *year;
 	if (endMonth == 13) {
 		endMonth = 1;
 		endYear = *year + 1;
@@ -528,10 +530,10 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* n
 
 char*
 incomeStatementTrsNew(StrInt* strints, int accType) {
-	auto len = strints[0].int1;
+	int len = strints[0].int1;
 	u16 outLen = 0; u16 outCap = 2048; char* out = calloc(2048, 1);
 	char tr[128];
-	char* trTemplate;
+	char* trTemplate = "";
 	switch (accType) {
 		case 0:
 			trTemplate = "<tr> <td>%s</td> <td>%.2f</td> <td></td> </tr>\n";
@@ -541,8 +543,8 @@ incomeStatementTrsNew(StrInt* strints, int accType) {
 			break;
 	}
 	for (int i = 1; i<= len; i++) {
-		auto it = strints[i];
-		auto trLen = snprintf(tr, 128, trTemplate, it.name, it.total);
+		StrInt it = strints[i];
+		int trLen = snprintf(tr, 128, trTemplate, it.name, it.total);
 		if (trLen >=128) {
 			printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
 					it.name, it.total);
@@ -560,9 +562,10 @@ incomeStatementTrsNew(StrInt* strints, int accType) {
 
 int
 compare_strint_desc(const void* a, const void* b) {
-	auto sa = (StrInt*)a;
-	auto sb = (StrInt*)b;
-	return sb->total - sa->total;
+	StrInt* sa = (StrInt*)a;
+	StrInt* sb = (StrInt*)b;
+	float diff = sb->total - sa->total;
+	return (diff > 0) - (diff < 0);
 }
 
 typedef struct {
@@ -590,16 +593,16 @@ bs_accs_new() {
 	BsAccs* out = malloc(sizeof(BsAccs));
 	out->cap = 20;
 	out->len = 0;
-	out->data = calloc(out->cap, sizeof(BsAccs));
+	out->data = calloc(out->cap, sizeof(BsAccTotal));
 	return out;
 }
 
 void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
 	if (bsAccs->len == bsAccs->cap) {
 		bsAccs->cap *= 2;
-		bsAccs->data = realloc(bsAccs->data, bsAccs->cap * sizeof(BsAccs));
+		bsAccs->data = realloc(bsAccs->data, bsAccs->cap * sizeof(BsAccTotal));
 	}
-	auto acc = &bsAccs->data[bsAccs->len];
+	BsAccTotal* acc = &bsAccs->data[bsAccs->len];
 	acc->id = id;
 	acc->name = name;
 	bsAccs->len++;
@@ -607,7 +610,7 @@ void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
 
 void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
 	for (u16 i = 1; i <= Accs[0].id; i++) {
-		auto acc = Accs[i];
+		Account acc = Accs[i];
 		switch (acc.type) {
 			case ASSET:
 				bs_accs_append(assets, acc.id, acc.name);
@@ -624,7 +627,7 @@ void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
 BsAccTotal*
 bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
 	for (u16 i=0; i<bsAccs->len; i++) {
-		auto *it = &bsAccs->data[i];
+		BsAccTotal *it = &bsAccs->data[i];
 		if (it->id == id) {
 			return it;
 		}
@@ -633,13 +636,13 @@ bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
 }
 
 void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
-	auto len = Txs[0].id;
+	u16 len = Txs[0].id;
 	for (u16 i=1; i <= len; i++) {
-		auto tx = Txs[i];
+		Tx tx = Txs[i];
 		if (tx.created_at > stop) { continue; }
 
 		// TODO maybe bs_accs_a and bs_accs_l should be one array? Don't know. Pray on it.
-		auto* bsacc = bs_accs_find_by_id(bs_accs_a, tx.debit_account_id);
+		BsAccTotal* bsacc = bs_accs_find_by_id(bs_accs_a, tx.debit_account_id);
 		if (bsacc) {
 			bsacc->total += tx.amount;
 		} else {
@@ -665,7 +668,7 @@ char*
 bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 	u16 outLen=0; u16 outCap=1024; char* out= calloc(outCap, 1);
 	for (u16 i=0; i<Accs->len; i++) {
-		auto it = Accs->data[i];
+		BsAccTotal it = Accs->data[i];
 		if (outLen > outCap-90) {
 			outCap *=2;
 			out = realloc(out, outCap);
@@ -709,7 +712,7 @@ incomeStatement(httpContext* request) {
 	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
 	u16 *txLen = &Txs[0].id;
 	for (u16 i = 1; i <= *txLen; i++) {
-		auto tx = Txs[i];
+		Tx tx = Txs[i];
 		if ((tx.created_at < start) || (tx.created_at >= stop)) {
 			continue;
 		}
@@ -729,17 +732,17 @@ incomeStatement(httpContext* request) {
 	StrInt* newStrInt;
 
 	for (u16 i = 1; i <= Accs[0].id; i++) {
-		auto acc = Accs[i];
+		Account acc = Accs[i];
 		switch (acc.type) {
 			case INCOME:
 				tot = 0;
 				for (u16 i = 0; i < periodTxsLen; i++) {
-					auto tx = periodTxs[i];
+					Tx tx = periodTxs[i];
 					if (tx.credit_account_id != acc.id) { continue; }
 					tot += tx.amount;
 				}
 				netProfitDollars += tot;
-				auto iaLen = incomeAccs[0].int1;
+				int iaLen = incomeAccs[0].int1;
 				newStrInt = &incomeAccs[iaLen+1];
 				newStrInt->name = strdup(acc.name);
 				newStrInt->total = tot;
@@ -748,12 +751,12 @@ incomeStatement(httpContext* request) {
 			case EXPENSE:
 				tot = 0;
 				for (u16 i = 0; i < periodTxsLen; i++) {
-					auto tx = periodTxs[i];
+					Tx tx = periodTxs[i];
 					if (tx.debit_account_id != acc.id) { continue; }
 					tot += tx.amount;
 				}
 				netProfitDollars -= tot;
-				auto eaLen = expenseAccs[0].int1;
+				int eaLen = expenseAccs[0].int1;
 				newStrInt = &expenseAccs[eaLen+1];
 				newStrInt->name = strdup(acc.name);
 				newStrInt->total = tot;
@@ -769,10 +772,10 @@ incomeStatement(httpContext* request) {
 	qsort(incomeAccs+1, incomeAccs[0].int1, sizeof(StrInt), compare_strint_desc);
 	qsort(expenseAccs+1, expenseAccs[0].int1, sizeof(StrInt), compare_strint_desc);
 
-	auto itrs = incomeStatementTrsNew(incomeAccs, INCOME);
-	auto etrs = incomeStatementTrsNew(expenseAccs, EXPENSE);
-	auto itrlen = strlen(itrs);
-	auto etrlen = strlen(etrs);
+	char* itrs = incomeStatementTrsNew(incomeAccs, INCOME);
+	char* etrs = incomeStatementTrsNew(expenseAccs, EXPENSE);
+	size_t itrlen = strlen(itrs);
+	size_t etrlen = strlen(etrs);
 
 	char* trs = calloc(itrlen + etrlen + 1, 1);
 	memcpy(trs, itrs, itrlen + 1);
@@ -811,7 +814,7 @@ createLedgerEntry(httpContext* request) {
 	struct tm* t2 = localtime(&t1);
 	char timeBuf[9];
 	strftime(timeBuf, 9, "%Y%m%d", t2);
-	auto newTx = tx_append(newId, atof(amount), note, atoi(debitID), atoi(creditID), atoi(timeBuf));
+	Tx* newTx = tx_append(newId, atof(amount), note, atoi(debitID), atoi(creditID), atoi(timeBuf));
 	tx_append_to_file(newTx);
 	write_redirect(request, 303, "/1");
 	free(debitID); free(creditID); free(note); free(amount);
@@ -871,7 +874,7 @@ listLedger(httpContext* request) {
 		aso = realloc(aso, total_length);
 		u16 written = 0;
 		for (u16 i = 1; i <= accs_len; i++) {
-			auto acc = Accs[i];
+			Account acc = Accs[i];
 			size_t written_to_temp = snprintf(aso+written, remaining_length,
 					"<option value=\"%hu\">%s</option>",
 					acc.id, acc.name);
@@ -946,7 +949,7 @@ parse_request(httpContext* request) {
 	}
 
 	char* first_line = calloc(1, 512);
-	strncpy(first_line, buf, line_len);
+	memcpy(first_line, buf, line_len);
 	char* http_method = request->http_method;
 	char* endpoint = request->endpoint;
 	char* http_version = request->http_version;
@@ -1035,7 +1038,7 @@ threadpool_worker(void* arg) {
 		if (sso < 0) {
 			printf("Couldn't set the socket timeout.\n");
 			close(client_socket);
-			return 0;
+			return NULL;
 		}
 
 		while (1) {
@@ -1094,7 +1097,7 @@ load_filedata() {
 	u16 id;
 	char* name = calloc(32, 1);
 	u16 type;
-	fgets(buf, 256, AccountFile); // Skip headers
+	if (fgets(buf, 256, AccountFile) == NULL) { printf("AccountFile empty.\n"); exit(1); }
 	printf("Reading AccountFile. Headers:%s", buf);
 	while(fgets(buf, 256, AccountFile) != NULL) {
 		int count = sscanf(buf, "%hu\t%31[^\t]\t%hu", &id, name, &type);
@@ -1115,7 +1118,7 @@ load_filedata() {
 	u16 debit_account_id;
 	u16 credit_account_id;
 	u32 created_at;
-	fgets(buf, 256, TxFile); // Skip headers.
+	if (fgets(buf, 256, TxFile) == NULL) { printf("TxFile empty.\n"); exit(1); }
 	printf("Reading TxFile. Headers:%s", buf);
 	while(fgets(buf, 256, TxFile) != NULL) {
 		int count = sscanf(buf, "%hu\t%f\t%127[^\t]\t%hu\t%hu\t%u", &id, &amount, note, &debit_account_id, &credit_account_id, &created_at);
