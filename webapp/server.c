@@ -316,7 +316,7 @@ write_all(int socket, char* buffer, size_t len) {
 			printf("write_all. Failed. just_wrote=%zd\n", just_wrote);
 			return 1;
 		}
-		written += just_wrote;
+		written += (size_t)just_wrote;
 		ptr += just_wrote;
 	}
 	return 0;
@@ -333,7 +333,7 @@ parse_route(u16 *route, char *endpoint) {
 	if (start == endptr) {
 		return 0;
 	}
-	*route = out;
+	*route = (u16)out;
 	return 1;
 }
 
@@ -366,8 +366,8 @@ read_file_newstr(char* path) {
 	fseek(file, 0, SEEK_END);
 	long file_size = ftell(file);
 	fseek(file, 0, SEEK_SET);
-	char* buf = malloc(file_size + 1);
-	size_t bytes_read = fread(buf, 1, file_size, file);
+	char* buf = malloc((size_t)file_size + 1);
+	size_t bytes_read = fread(buf, 1, (size_t)file_size, file);
 	buf[bytes_read] = 0;
 	fclose(file);
 	return buf;
@@ -423,7 +423,7 @@ ledger_newest_30_newstr() {
 		Tx tx = Txs[i];
 		char* debit_acct_name = account_with_id(tx.debit_account_id).name;
 		char* credit_acct_name = account_with_id(tx.credit_account_id).name;
-		size_t written_to_temp = snprintf(temp, 1024,
+		int written_to_temp = snprintf(temp, 1024,
 			"<tr>"
 			  "<td>%hu</td>"
 			  "<td>%u</td>"
@@ -495,11 +495,11 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* n
 	if ((mStr == NULL) || (yStr == NULL)) {
 		time_t t1 = time(NULL); // Use current month & year
 		struct tm* t2 = localtime(&t1);
-		*year = t2->tm_year + 1900;
-		*month = t2->tm_mon+ 1;
+		*year = (u16)(t2->tm_year + 1900);
+		*month = (u16)(t2->tm_mon + 1);
 	} else {
-		*month = atoi(mStr);
-		*year = atoi(yStr);
+		*month = (u16)atoi(mStr);
+		*year = (u16)atoi(yStr);
 	}
 	free(mStr);
 	free(yStr);
@@ -510,7 +510,7 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* n
 		endMonth = 1;
 		endYear = *year + 1;
 	}
-	*stop = (endYear * 10000) + (endMonth * 100) + 1;
+	*stop = (u32)((endYear * 10000) + (endMonth * 100) + 1);
 
 	u16 prevYear = *year;
 	u16 prevMonth = *month - 1;
@@ -554,7 +554,7 @@ incomeStatementTrsNew(StrInt* strints, int accType) {
 			outCap *= 2;
 			out = realloc(out, outCap);
 		}
-		memcpy(out + outLen, tr, trLen + 1);
+		memcpy(out + outLen, tr, (size_t)(trLen + 1));
 		outLen += trLen;
 	}
 	return out;
@@ -565,7 +565,7 @@ compare_strint_desc(const void* a, const void* b) {
 	StrInt* sa = (StrInt*)a;
 	StrInt* sb = (StrInt*)b;
 	float diff = sb->total - sa->total;
-	return (diff > 0) - (diff < 0);
+	return (int)((diff > 0) - (diff < 0));
 }
 
 typedef struct {
@@ -673,7 +673,7 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 			outCap *=2;
 			out = realloc(out, outCap);
 		}
-		u16 written = 100;
+		int written = 100;
 		switch (accType) {
 			case ASSET:
 				written = snprintf(out+outLen, 89,
@@ -689,7 +689,7 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 		if (written > 89) {
 			printf("snprintf fail. name=%s total=%f\n", it.name, it.total);
 		}
-		outLen += written;
+		outLen += (u16)written;
 	}
 	return out;
 }
@@ -769,8 +769,8 @@ incomeStatement(httpContext* request) {
 
 	// Got to start from the idx-1 because idx0 is a sentinel that only has the counts. Yeah, this
 	// makes sorting a bit wonky.
-	qsort(incomeAccs+1, incomeAccs[0].int1, sizeof(StrInt), compare_strint_desc);
-	qsort(expenseAccs+1, expenseAccs[0].int1, sizeof(StrInt), compare_strint_desc);
+	qsort(incomeAccs+1, (size_t)incomeAccs[0].int1, sizeof(StrInt), compare_strint_desc);
+	qsort(expenseAccs+1, (size_t)expenseAccs[0].int1, sizeof(StrInt), compare_strint_desc);
 
 	char* itrs = incomeStatementTrsNew(incomeAccs, INCOME);
 	char* etrs = incomeStatementTrsNew(expenseAccs, EXPENSE);
@@ -814,7 +814,7 @@ createLedgerEntry(httpContext* request) {
 	struct tm* t2 = localtime(&t1);
 	char timeBuf[9];
 	strftime(timeBuf, 9, "%Y%m%d", t2);
-	Tx* newTx = tx_append(newId, atof(amount), note, atoi(debitID), atoi(creditID), atoi(timeBuf));
+	Tx* newTx = tx_append(newId, (float)atof(amount), note, (u16)atoi(debitID), (u16)atoi(creditID), (u32)atoi(timeBuf));
 	tx_append_to_file(newTx);
 	write_redirect(request, 303, "/1");
 	free(debitID); free(creditID); free(note); free(amount);
@@ -849,8 +849,8 @@ createAccount(httpContext* request) {
 		free(out); free(name2); free(name); free(type);
 		return;
 	}
-	acc_append(new_account_id, name2, type_i);
-	acc_append_file(new_account_id, name2, type_i);
+	acc_append(new_account_id, name2, (u16)type_i);
+	acc_append_file(new_account_id, name2, (u16)type_i);
 	write_redirect(request, 303, "/2");
 	free(name2); free(name); free(type);
 	return;
@@ -870,18 +870,18 @@ listLedger(httpContext* request) {
 	u16 accs_len = Accs[0].id;
 	if ((last_known_id == NULL) || (*last_known_id != accs_len)) {
 		size_t total_length = accs_len * 90;
-		u16 remaining_length = total_length;
+		size_t remaining_length = total_length;
 		aso = realloc(aso, total_length);
-		u16 written = 0;
+		size_t written = 0;
 		for (u16 i = 1; i <= accs_len; i++) {
 			Account acc = Accs[i];
-			size_t written_to_temp = snprintf(aso+written, remaining_length,
+			int written_to_temp = snprintf(aso+written, remaining_length,
 					"<option value=\"%hu\">%s</option>",
 					acc.id, acc.name);
-			if (written_to_temp >= remaining_length) {
+			if (written_to_temp < 0 || (size_t)written_to_temp >= remaining_length) {
 				printf("ERR: account_selection_options: temp truncated to remaining_length: %s\n", aso); }
-			written += written_to_temp;
-			remaining_length -= written_to_temp;
+			written += (size_t)written_to_temp;
+			remaining_length -= (size_t)written_to_temp;
 		}
 		last_known_id = malloc(sizeof(u16));
 		*last_known_id = Accs[accs_len].id;
@@ -942,7 +942,7 @@ parse_request(httpContext* request) {
 		write_to_client(request, 422, "Couldn't identify the first header. Fix your request.");
 		return 0;
 	}
-	size_t line_len = line_end - buf;
+	size_t line_len = (size_t)(line_end - buf);
 	if (line_len > 512) {
 		write_to_client(request, 413, "Request endpoint too large. We aren't parsing over 512B.");
 		return 0;
@@ -1045,7 +1045,7 @@ threadpool_worker(void* arg) {
 			httpContext_clear(ctx);
 			char* buf = ctx->request_buf;
 			// TODO What happens if we don't get the full request in one network packet/chunk? Figure this out later. Do the happy path first.
-			int bytes_read = recv(client_socket, buf, 2047, 0);
+			ssize_t bytes_read = recv(client_socket, buf, 2047, 0);
 			if (bytes_read < 1) {
 				printf("Client socket. Either timeout or error. Closing.\n");
 				break;
@@ -1164,7 +1164,7 @@ main(int argc, char** argv) {
 	}
 
 	socketqueue_init(&SocketQueue);
-	u16 port = atoi(argv[1]);
+	u16 port = (u16)atoi(argv[1]);
 	char* dirpath = argv[2];
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
