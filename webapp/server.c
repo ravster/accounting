@@ -576,6 +576,15 @@ typedef struct {
 	u16 cap;
 } BsAccs;
 
+void
+bs_accs_print(BsAccs *data) {
+	printf("Len: %d\n", data->len);
+	for (int i = 0; i< data->len; i++) {
+		BsAccTotal it = data->data[i];
+		printf("%d\t%.2f\t%s\n", it.id, it.total, it.name);
+	}
+}
+
 BsAccs*
 bs_accs_new() {
 	BsAccs* out = malloc(sizeof(BsAccs));
@@ -906,6 +915,7 @@ balanceSheet(httpContext* request) {
 	auto bs_accs_a = bs_accs_new();
 	auto bs_accs_l = bs_accs_new();
 	bs_accs_populate_new(bs_accs_a, bs_accs_l); // Asset, Liability
+	// bs_accs_print(bs_accs_a);
 	bs_accs_calc_totals(bs_accs_a, bs_accs_l, stop);
 	auto trs_a = bs_accs_trs_new(bs_accs_a, 2);
 	auto trs_l = bs_accs_trs_new(bs_accs_l, 3);
@@ -1198,7 +1208,6 @@ main(int argc, char** argv) {
 
 	int server_fd = listen_on_port(port);
 	while (1) {
-		// Build up client socket.
 		struct sockaddr_in client_addr;
 		socklen_t addr_len = sizeof(client_addr);
 		// This blocks till a connection comes through. Easy.
@@ -1207,8 +1216,6 @@ main(int argc, char** argv) {
 			perror("accept failed");
 			continue;
 		}
-
-		// Write to queue
 		socketqueue_push(&SocketQueue, client_socket);
 	}
 	fclose(AccountFile);
