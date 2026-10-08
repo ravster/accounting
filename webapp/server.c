@@ -311,9 +311,6 @@ fillPostParams(httpContext* ctx) {
 	strncpy(ctx->postP, reqBodyStart, newLen + 1);
 	return 1;
 }
-
-// TODO Wouldn't need this. Move to using thread_local local_persist variables in the thread-mains.
-httpContext requests[4];
 // END httpContext object.
 
 int // err
@@ -1049,10 +1046,14 @@ handle_request(httpContext* request) {
 
 void*
 threadpool_worker(void* arg) {
-	int thread_idx = *((int*)arg);
-	free(arg);
-	httpContext* ctx;
-	ctx = &requests[thread_idx];
+	(void)arg;
+	thread_local static httpContext *ctx;
+	if (ctx == NULL) {
+		ctx = malloc(sizeof(httpContext));
+		// TODO wouldn't need this when we switch to actual structs for the params. We can coalesce these.
+		ctx->getP = malloc(256);
+		ctx->postP = malloc(256);
+	}
 
 	while (1) {
 		int client_socket = socketqueue_pop(&SocketQueue);
@@ -1207,13 +1208,6 @@ main(int argc, char** argv) {
 	free(tx_path);
 	load_filedata();
 
-	for (int i = 0; i < THREAD_POOL_SIZE; i++) {
-		// TODO Switch to having each thread-worker declare it's own thread_local static var of this. This doesn't need to be a global.
-		httpContext *req = &requests[i];
-		req->getP = malloc(256);
-		req->postP = malloc(256);
-	}
-
 	// Set up thread pool
 	// param pool_size uint
 	// param threadpool_worker func
@@ -1221,12 +1215,10 @@ main(int argc, char** argv) {
 	// pass that in in the future.
 	pthread_t thread_pool[THREAD_POOL_SIZE];
 	for (int i = 0; i<THREAD_POOL_SIZE; i++) {
-		int* thread_idx = malloc(sizeof(int));
-		*thread_idx = i;
 		int err = pthread_create(&thread_pool[i],
 				NULL,
 				threadpool_worker,
-				thread_idx);
+				NULL);
 		if (err != 0) {
 			perror("Couldn't create thread in pool!\n");
 			return 1;
