@@ -271,6 +271,15 @@ struct params_t {
 	struct param_t* list;
 };
 
+void
+params_t_print(struct params_t* params) {
+	printf("params_t. len=%zu cap=%zu\n", params->len, params->cap);
+	for (size_t i = 0; i<params->len; i++) {
+		struct param_t it = params->list[i];
+		printf("  k=%s v=%s\n", it.k, it.v);
+	}
+}
+
 char*
 params_t_get(struct params_t* params, char* needle) {
 	for (size_t i = 0; i < params->len; i++) {
@@ -803,19 +812,10 @@ incomeStatement(httpContext* request) {
 
 	float tot = 0;
 	size_t strint_amt = Accs[0].id * sizeof(StrInt);
-	printf("amount to malloc: %zu\n", strint_amt);
 	StrInt* incomeAccs = malloc(strint_amt);
 	incomeAccs[0].int1 = 0; // Use this as array length
 	StrInt* expenseAccs = malloc(strint_amt);
 	expenseAccs[0].int1 = 0; // Use this as array length
-
-	printf("incomeAccs:  %p\n", (void*)incomeAccs);
-printf("expenseAccs: %p\n", (void*)expenseAccs);
-
-// Calculate the actual distance in bytes
-uintptr_t diff_in_bytes = (uintptr_t)incomeAccs - (uintptr_t)expenseAccs;
-printf("diff in bytes = %zu\n", diff_in_bytes);
-
 	StrInt* newStrInt;
 
 	for (u16 i = 1; i <= Accs[0].id; i++) {
@@ -856,18 +856,12 @@ printf("diff in bytes = %zu\n", diff_in_bytes);
 
 	// Got to start from the idx-1 because idx0 is a sentinel that only has the counts. Yeah, this
 	// makes sorting a bit wonky.
-	printStrInts(incomeAccs);
 	if (incomeAccs[0].int1 > 1) {
-		printf("sorting incomeaccs\n");
 		qsort(incomeAccs+1, (size_t)incomeAccs[0].int1, sizeof(StrInt), compare_strint_desc);
 	}
-	printf("herp\n");
 	if (expenseAccs[0].int1 > 1) {
-		printf("sorting expenseAccs\n");
-		printStrInts(incomeAccs);
 		qsort(expenseAccs+1, (size_t)expenseAccs[0].int1, sizeof(StrInt), compare_strint_desc);
 	}
-	printf("derp\n");
 
 	printStrInts(incomeAccs);
 	char* itrs = incomeStatementTrsNew(incomeAccs, INCOME);
@@ -1073,7 +1067,9 @@ parse_request(httpContext* request) {
 	}
 
 	fillGetParams(request);
+	params_t_print(&request->params);
 	fillPostParams(request);
+	params_t_print(&request->params);
 
 	free(first_line);
 	return 1;
