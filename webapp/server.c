@@ -1,12 +1,11 @@
-#define _GNU_SOURCE
 #include <signal.h>
 #include <stdatomic.h>
 #include <semaphore.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdarg.h>
-#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
@@ -569,8 +568,6 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* n
                *month = (u16)atoi(mStr);
                *year = (u16)atoi(yStr);
        }
-       free(mStr);
-       free(yStr);
        *start = (*year*10000) + (*month * 100) + 1;
        u16 endMonth = *month + 1;
        u16 endYear = *year;
@@ -805,10 +802,20 @@ incomeStatement(httpContext* request) {
 	}
 
 	float tot = 0;
-	StrInt* incomeAccs = calloc(Accs[0].id, sizeof(StrInt));
+	size_t strint_amt = Accs[0].id * sizeof(StrInt);
+	printf("amount to malloc: %zu\n", strint_amt);
+	StrInt* incomeAccs = malloc(strint_amt);
 	incomeAccs[0].int1 = 0; // Use this as array length
-	StrInt* expenseAccs = calloc(Accs[0].id, sizeof(StrInt));
+	StrInt* expenseAccs = malloc(strint_amt);
 	expenseAccs[0].int1 = 0; // Use this as array length
+
+	printf("incomeAccs:  %p\n", (void*)incomeAccs);
+printf("expenseAccs: %p\n", (void*)expenseAccs);
+
+// Calculate the actual distance in bytes
+uintptr_t diff_in_bytes = (uintptr_t)incomeAccs - (uintptr_t)expenseAccs;
+printf("diff in bytes = %zu\n", diff_in_bytes);
+
 	StrInt* newStrInt;
 
 	for (u16 i = 1; i <= Accs[0].id; i++) {
