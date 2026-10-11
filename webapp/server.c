@@ -283,9 +283,7 @@ params_t_print(struct params_t* params) {
 char*
 params_t_get(struct params_t* params, char* needle) {
 	for (size_t i = 0; i < params->len; i++) {
-		printf("get_par i=%zu\n", i);
 		struct param_t param = params->list[i];
-		printf("get-param needle=%s k=%s v=%s\n", needle, param.k, param.v);
 		if (strcmp(needle, param.k) == 0) {
 			return param.v;
 		}
@@ -1149,6 +1147,7 @@ threadpool_worker(void* arg) {
 				write_to_client(ctx, 413, "Request too large. Max is 2KB.");
 				break;
 			}
+			buf[bytes_read] = 0; // Herp derp do null termination stupid.
 
 			ctx->client_socket = client_socket;
 			handle_request(ctx);
