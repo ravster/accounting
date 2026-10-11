@@ -65,6 +65,19 @@ tx_append_to_file(Tx* newTx) {
 			newTx->debit_account_id, newTx->credit_account_id, newTx->created_at);
 }
 
+int
+txs_compare_created_at_asc(const void* a, const void* b) {
+	Tx* x = (Tx*)a;
+	Tx* y = (Tx*)b;
+	if (x->created_at < y->created_at) {
+		return -1;
+	} else if (x-> created_at > y->created_at) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
 typedef struct {
 	u16 id; // len
 	char* name;
@@ -312,27 +325,23 @@ httpContext_clear(httpContext* ctx) {
 	ctx->rawparams[0] = 0;
 }
 
+// TODO inline Should be only 1 caller.
 void
 params_t_overwrite(httpContext* ctx) {
 	char* in = ctx->rawparams;
 	if (in == NULL) { return; }
 	struct params_t* params = &ctx->params;
-	size_t count = 0;
-	char* found = strchr(in, '=');
-	while (found != NULL) {
-		count++;
-		found = strchr(found + 1, '=');
-	}
-	if (params->cap < count) {
-		params->cap = count;
-		params->list = realloc(params->list, count * sizeof(struct param_t));
-	}
+
 	char* delim = "=&";
 	char* savepoint = NULL;
 	char* token = strtok_r(in, delim, &savepoint);
 	int write_key = 1;
-	int idx = 0;
+	size_t idx = 0;
 	while (token != NULL) {
+		if (idx == params->cap) {
+			params->cap *=2;
+			params->list = realloc(params->list, params->cap * sizeof(struct param_t));
+		}
 		struct param_t *param = &params->list[idx];
 		if (write_key) {
 			param->k = token;
@@ -349,35 +358,26 @@ params_t_overwrite(httpContext* ctx) {
 }
 
 void
-fillGetParams(httpContext* ctx) {
-	char* qmark = strchr(ctx->endpoint, '?');
-	if (qmark == NULL) { return; }
-	char* after_qmark = qmark+1;
-	size_t new_len = strlen(after_qmark);
-	if (new_len > ctx->rawparams_len) {
-		ctx->rawparams_len *= 2;
+fillParams(httpContext* ctx) {
+	char* raw1 = NULL;
+	char* reqBodyStart = strstr(ctx->request_buf, "\r\n\r\n");
+	if ((reqBodyStart != NULL) && (strlen(reqBodyStart) > 5)) {
+		reqBodyStart += 4; // 2 CR and 2 NL.
+		raw1 = reqBodyStart;
+	} else {
+		char* qmark = strchr(ctx->endpoint, '?');
+		if (qmark == NULL) { return; }
+		raw1 = qmark + 1;
+	}
+	size_t newLen = strlen(raw1);
+	if (newLen >= ctx->rawparams_len) {
+		ctx->rawparams_len = newLen * 2;
 		ctx->rawparams = realloc(ctx->rawparams, ctx->rawparams_len + 1);
 	}
-	strncpy(ctx->rawparams, after_qmark, new_len + 1);
+	strncpy(ctx->rawparams, raw1, newLen + 1);
 	params_t_overwrite(ctx);
 }
 
-void
-fillPostParams(httpContext* ctx) {
-	char* reqBodyStart = strstr(ctx->request_buf, "\r\n\r\n");
-	// Nothing to do.
-	if ((reqBodyStart == NULL) || (strlen(reqBodyStart) < 5)) { return; }
-	printf("fillpostpar reqbodystart=%s\n", reqBodyStart);
-	reqBodyStart += 4; // 2 CR and 2 NL.
-	size_t newLen = strlen(reqBodyStart);
-	if (newLen > ctx->rawparams_len) {
-		ctx->rawparams_len *= 2;
-		ctx->rawparams = realloc(ctx->rawparams, newLen + 1);
-	}
-	strncpy(ctx->rawparams, reqBodyStart, newLen + 1);
-	ctx->rawparams_len = newLen;
-	params_t_overwrite(ctx);
-}
 // END httpContext object.
 
 int // err
@@ -564,217 +564,217 @@ void url_decode(char* str) {
 
 void
 calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* nextLink, struct params_t* params) {
-       char* mStr = params_t_get(params, "m");
-       char* yStr = params_t_get(params, "y");
-       if ((mStr == NULL) || (yStr == NULL)) {
-               time_t t1 = time(NULL); // Use current month & year
-               struct tm* t2 = localtime(&t1);
-               *year = (u16)(t2->tm_year + 1900);
-               *month = (u16)(t2->tm_mon + 1);
-       } else {
-               *month = (u16)atoi(mStr);
-               *year = (u16)atoi(yStr);
-       }
-       *start = (*year*10000) + (*month * 100) + 1;
-       u16 endMonth = *month + 1;
-       u16 endYear = *year;
-       if (endMonth == 13) {
-               endMonth = 1;
-               endYear = *year + 1;
-       }
-       *stop = (u32)((endYear * 10000) + (endMonth * 100) + 1);
+	char* mStr = params_t_get(params, "m");
+	char* yStr = params_t_get(params, "y");
+	if ((mStr == NULL) || (yStr == NULL)) {
+		time_t t1 = time(NULL); // Use current month & year
+		struct tm* t2 = localtime(&t1);
+		*year = (u16)(t2->tm_year + 1900);
+		*month = (u16)(t2->tm_mon + 1);
+	} else {
+		*month = (u16)atoi(mStr);
+		*year = (u16)atoi(yStr);
+	}
+	*start = (*year*10000) + (*month * 100) + 1;
+	u16 endMonth = *month + 1;
+	u16 endYear = *year;
+	if (endMonth == 13) {
+		endMonth = 1;
+		endYear = *year + 1;
+	}
+	*stop = (u32)((endYear * 10000) + (endMonth * 100) + 1);
 
-       u16 prevYear = *year;
-       u16 prevMonth = *month - 1;
-       if (prevMonth == 0) {
-               prevMonth = 12;
-               prevYear--;
-       }
-       snprintf(prevLink, 12, "m=%hu&y=%hu", prevMonth, prevYear);
-       u16 nextYear = *year;
-       u16 nextMonth = *month + 1;
-       if (nextMonth == 13) {
-               nextMonth = 1;
-               nextYear++;
-       }
-       snprintf(nextLink, 12, "m=%hu&y=%hu", nextMonth, nextYear);
+	u16 prevYear = *year;
+	u16 prevMonth = *month - 1;
+	if (prevMonth == 0) {
+		prevMonth = 12;
+		prevYear--;
+	}
+	snprintf(prevLink, 12, "m=%hu&y=%hu", prevMonth, prevYear);
+	u16 nextYear = *year;
+	u16 nextMonth = *month + 1;
+	if (nextMonth == 13) {
+		nextMonth = 1;
+		nextYear++;
+	}
+	snprintf(nextLink, 12, "m=%hu&y=%hu", nextMonth, nextYear);
 }
 
 char*
 incomeStatementTrsNew(StrInt* strints, int accType) {
-       int len = strints[0].int1;
-       u16 outLen = 0; u16 outCap = 2048; char* out = calloc(2048, 1);
-       char tr[128];
-       char* trTemplate = "";
-       switch (accType) {
-               case 0:
-                       trTemplate = "<tr> <td>%s</td> <td>%.2f</td> <td></td> </tr>\n";
-                       break;
-               case 1:
-                       trTemplate = "<tr> <td>%s</td> <td></td> <td>%.2f</td> </tr>\n";
-                       break;
-       }
-       for (int i = 1; i<= len; i++) {
-               StrInt it = strints[i];
-               int trLen = snprintf(tr, 128, trTemplate, it.name, it.total);
-               if (trLen >=128) {
-                       printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
-                                       it.name, it.total);
-                       trLen--; // For the benefit of memcpy below;
-               }
-               if (1+ outLen + trLen > outCap) {
-                       outCap *= 2;
-                       out = realloc(out, outCap);
-               }
-               memcpy(out + outLen, tr, (size_t)(trLen + 1));
-               outLen += trLen;
-       }
-       return out;
+	int len = strints[0].int1;
+	u16 outLen = 0; u16 outCap = 2048; char* out = calloc(2048, 1);
+	char tr[128];
+	char* trTemplate = "";
+	switch (accType) {
+		case 0:
+			trTemplate = "<tr> <td>%s</td> <td>%.2f</td> <td></td> </tr>\n";
+			break;
+		case 1:
+			trTemplate = "<tr> <td>%s</td> <td></td> <td>%.2f</td> </tr>\n";
+			break;
+	}
+	for (int i = 1; i<= len; i++) {
+		StrInt it = strints[i];
+		int trLen = snprintf(tr, 128, trTemplate, it.name, it.total);
+		if (trLen >=128) {
+			printf("WARN: Truncated trLen when doing incomeStatement. name:%s tot:%f\n",
+					it.name, it.total);
+			trLen--; // For the benefit of memcpy below;
+		}
+		if (1+ outLen + trLen > outCap) {
+			outCap *= 2;
+			out = realloc(out, outCap);
+		}
+		memcpy(out + outLen, tr, (size_t)(trLen + 1));
+		outLen += trLen;
+	}
+	return out;
 }
 
 int
 compare_strint_desc(const void* a, const void* b) {
-       StrInt* sa = (StrInt*)a;
-       StrInt* sb = (StrInt*)b;
-       float diff = sb->total - sa->total;
-       return (int)((diff > 0) - (diff < 0));
+	StrInt* sa = (StrInt*)a;
+	StrInt* sb = (StrInt*)b;
+	float diff = sb->total - sa->total;
+	return (int)((diff > 0) - (diff < 0));
 }
 
 typedef struct {
-       u16 id;
-       float total;
-       char* name;
+	u16 id;
+	float total;
+	char* name;
 } BsAccTotal;
 typedef struct {
-       BsAccTotal* data;
-       u16 len;
-       u16 cap;
+	BsAccTotal* data;
+	u16 len;
+	u16 cap;
 } BsAccs;
 
 void
 bs_accs_print(BsAccs *data) {
-       printf("Len: %d\n", data->len);
-       for (int i = 0; i< data->len; i++) {
-               BsAccTotal it = data->data[i];
-               printf("%d\t%.2f\t%s\n", it.id, it.total, it.name);
-       }
+	printf("Len: %d\n", data->len);
+	for (int i = 0; i< data->len; i++) {
+		BsAccTotal it = data->data[i];
+		printf("%d\t%.2f\t%s\n", it.id, it.total, it.name);
+	}
 }
 
 BsAccs*
 bs_accs_new() {
-       BsAccs* out = malloc(sizeof(BsAccs));
-       out->cap = 20;
-       out->len = 0;
-       out->data = calloc(out->cap, sizeof(BsAccTotal));
-       return out;
+	BsAccs* out = malloc(sizeof(BsAccs));
+	out->cap = 20;
+	out->len = 0;
+	out->data = calloc(out->cap, sizeof(BsAccTotal));
+	return out;
 }
 
 void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
-       if (bsAccs->len == bsAccs->cap) {
-               bsAccs->cap *= 2;
-               bsAccs->data = realloc(bsAccs->data, bsAccs->cap * sizeof(BsAccTotal));
-       }
-       BsAccTotal* acc = &bsAccs->data[bsAccs->len];
-       acc->id = id;
-       acc->name = name;
-       bsAccs->len++;
+	if (bsAccs->len == bsAccs->cap) {
+		bsAccs->cap *= 2;
+		bsAccs->data = realloc(bsAccs->data, bsAccs->cap * sizeof(BsAccTotal));
+	}
+	BsAccTotal* acc = &bsAccs->data[bsAccs->len];
+	acc->id = id;
+	acc->name = name;
+	bsAccs->len++;
 }
 
 void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
-       for (u16 i = 1; i <= Accs[0].id; i++) {
-               Account acc = Accs[i];
-               switch (acc.type) {
-                       case ASSET:
-                               bs_accs_append(assets, acc.id, acc.name);
-                               break;
-                       case LIABILITY:
-                               bs_accs_append(liabilities, acc.id, acc.name);
-                               break;
-                       default:
-                               continue;
-               }
-       }
+	for (u16 i = 1; i <= Accs[0].id; i++) {
+		Account acc = Accs[i];
+		switch (acc.type) {
+			case ASSET:
+				bs_accs_append(assets, acc.id, acc.name);
+				break;
+			case LIABILITY:
+				bs_accs_append(liabilities, acc.id, acc.name);
+				break;
+			default:
+				continue;
+		}
+	}
 }
 
 BsAccTotal*
 bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
-       for (u16 i=0; i<bsAccs->len; i++) {
-               BsAccTotal *it = &bsAccs->data[i];
-               if (it->id == id) {
-                       return it;
-               }
-       }
-       return NULL;
+	for (u16 i=0; i<bsAccs->len; i++) {
+		BsAccTotal *it = &bsAccs->data[i];
+		if (it->id == id) {
+			return it;
+		}
+	}
+	return NULL;
 }
 
 void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
-       u16 len = Txs[0].id;
-       for (u16 i=1; i <= len; i++) {
-               Tx tx = Txs[i];
-               if (tx.created_at > stop) { continue; }
+	u16 len = Txs[0].id;
+	for (u16 i=1; i <= len; i++) {
+		Tx tx = Txs[i];
+		if (tx.created_at > stop) { continue; }
 
-               // TODO maybe bs_accs_a and bs_accs_l should be one array? Don't know. Pray on it.
-               BsAccTotal* bsacc = bs_accs_find_by_id(bs_accs_a, tx.debit_account_id);
-               if (bsacc) {
-                       bsacc->total += tx.amount;
-               } else {
-                       bsacc = bs_accs_find_by_id(bs_accs_l, tx.debit_account_id);
-                       if (bsacc) {
-                               bsacc->total -= tx.amount;
-                       }
-               }
+		// TODO maybe bs_accs_a and bs_accs_l should be one array? Don't know. Pray on it.
+		BsAccTotal* bsacc = bs_accs_find_by_id(bs_accs_a, tx.debit_account_id);
+		if (bsacc) {
+			bsacc->total += tx.amount;
+		} else {
+			bsacc = bs_accs_find_by_id(bs_accs_l, tx.debit_account_id);
+			if (bsacc) {
+				bsacc->total -= tx.amount;
+			}
+		}
 
-               bsacc = bs_accs_find_by_id(bs_accs_a, tx.credit_account_id);
-               if (bsacc) {
-                       bsacc->total -= tx.amount;
-               } else {
-                       bsacc = bs_accs_find_by_id(bs_accs_l, tx.credit_account_id);
-                       if (bsacc) {
-                               bsacc->total += tx.amount;
-                       } else { continue; }
-               }
-       }
+		bsacc = bs_accs_find_by_id(bs_accs_a, tx.credit_account_id);
+		if (bsacc) {
+			bsacc->total -= tx.amount;
+		} else {
+			bsacc = bs_accs_find_by_id(bs_accs_l, tx.credit_account_id);
+			if (bsacc) {
+				bsacc->total += tx.amount;
+			} else { continue; }
+		}
+	}
 }
 
 char*
 bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
-       u16 outLen=0; u16 outCap=1024; char* out= calloc(outCap, 1);
-       for (u16 i=0; i<Accs->len; i++) {
-               BsAccTotal it = Accs->data[i];
-               if (outLen > outCap-90) {
-                       outCap *=2;
-                       out = realloc(out, outCap);
-               }
-               int written = 100;
-               switch (accType) {
-                       case ASSET:
-                               written = snprintf(out+outLen, 89,
-                                               "<tr><td>%s</td><td>%.2f</td><td></td></tr>\n", it.name, it.total);
-                               break;
-                       case LIABILITY:
-                               written = snprintf(out+outLen, 89,
-                                               "<tr><td>%s</td><td></td><td>%.2f</td></tr>\n", it.name, it.total);
-                               break;
-                       default:
-                               printf("Shouldn't have gotten to this default case.\n");
-               }
-               if (written > 89) {
-                       printf("snprintf fail. name=%s total=%f\n", it.name, it.total);
-               }
-               outLen += (u16)written;
-       }
-       return out;
+	u16 outLen=0; u16 outCap=1024; char* out= calloc(outCap, 1);
+	for (u16 i=0; i<Accs->len; i++) {
+		BsAccTotal it = Accs->data[i];
+		if (outLen > outCap-90) {
+			outCap *=2;
+			out = realloc(out, outCap);
+		}
+		int written = 100;
+		switch (accType) {
+			case ASSET:
+				written = snprintf(out+outLen, 89,
+						"<tr><td>%s</td><td>%.2f</td><td></td></tr>\n", it.name, it.total);
+				break;
+			case LIABILITY:
+				written = snprintf(out+outLen, 89,
+						"<tr><td>%s</td><td></td><td>%.2f</td></tr>\n", it.name, it.total);
+				break;
+			default:
+				printf("Shouldn't have gotten to this default case.\n");
+		}
+		if (written > 89) {
+			printf("snprintf fail. name=%s total=%f\n", it.name, it.total);
+		}
+		outLen += (u16)written;
+	}
+	return out;
 }
 
 global_variable char* ListAccountsCache;
 void
 listAccountsCache_write() {
-       local_persist char* template;
-       if (!template) { template = read_file_newstr("templates/listAccounts.html"); }
-       free(ListAccountsCache);
-       sstr* trs = tr_of_every_account();
-       asprintf(&ListAccountsCache, template, trs->buf);
-       sstr_free(trs);
+	local_persist char* template;
+	if (!template) { template = read_file_newstr("templates/listAccounts.html"); }
+	free(ListAccountsCache);
+	sstr* trs = tr_of_every_account();
+	asprintf(&ListAccountsCache, template, trs->buf);
+	sstr_free(trs);
 }
 // END Layer below request handlers.
 
@@ -925,6 +925,51 @@ createLedgerEntry(httpContext* request) {
 }
 
 void
+updateTx(httpContext* request) {
+	char* txid = params_t_get(&request->params, "txid");
+	char* newdate = params_t_get(&request->params, "newdate");
+	if ((txid == NULL) || (newdate == NULL)) {
+		write_to_client(request, 422, "Required params: [txid, newdate]\n");
+		return;
+	}
+	u16 txid_i = (u16)atoi(txid);
+	Tx* found = NULL;
+	for (int i = 1; i <= Txs[0].id; i++) {
+		Tx it = Txs[i];
+		if (it.id == txid_i) {
+			found = &Txs[i];
+			break;
+		}
+	}
+	if (!found) {
+		char* out;
+		asprintf(&out, "txid=%d doesn't map to an existing transaction\n", txid_i);
+		write_to_client(request, 422, out);
+		return;
+	}
+	printf("found=%hu\n", found->id);
+	u32 newdate_i = (u32)atoi(newdate);
+	// TODO verify >20260101 and <20280101
+	found->created_at = newdate_i;
+	u16 len = Txs[0].id;
+	if (len > 1) {
+		qsort(&Txs[1], len, sizeof(Tx), txs_compare_created_at_asc);
+		for (u16 i = 1; i <= len; i++) {
+			Txs[i].id = i;
+		}
+		rewind(TxFile);
+		fprintf(TxFile, "id\tamount\tnote\tdebit_account_id\tcredit_account_id\tcreated_at\n");
+		for (u16 i = 1; i <= len; i++) {
+			tx_append_to_file(&Txs[i]);
+		}
+		fflush(TxFile);
+		ftruncate(fileno(TxFile), ftell(TxFile));
+	}
+	write_redirect(request, 303, "/1");
+	return;
+}
+
+void
 createAccount(httpContext* request) {
 	char* name = params_t_get(&request->params, "name");
 	char* type = params_t_get(&request->params, "type");
@@ -1064,9 +1109,7 @@ parse_request(httpContext* request) {
 		return 0;
 	}
 
-	fillGetParams(request);
-	params_t_print(&request->params);
-	fillPostParams(request);
+	fillParams(request);
 	params_t_print(&request->params);
 
 	free(first_line);
@@ -1100,6 +1143,9 @@ handle_request(httpContext* request) {
 			break;
 		case 6:
 			balanceSheet(request);
+			break;
+		case 7:
+			updateTx(request);
 			break;
 		default:
 			write_to_client(request, 404, "Not found");
