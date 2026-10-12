@@ -305,24 +305,30 @@ params_t_get(struct params_t* params, char* needle) {
 }
 
 typedef struct {
-	char request_buf[2048], http_method[8], endpoint[256], http_version[16],
-	     errmsg[256];
-	u16 route;
+	char request_buf[2048], endpoint[256];
 	char* rawparams;
-	size_t rawparams_len;
+	size_t rawparams_cap;
 	struct params_t params;
 	int client_socket;
 } httpContext;
 
 void
+httpContext_write_endpoint(httpContext* ctx) {
+	char* buf = ctx->request_buf;
+	char* first_space = strchr(buf, ' ');
+	char* epstart = first_space + 1;
+	char* second_space = strchr(epstart, ' ');
+	size_t len = (size_t)(second_space - epstart);
+	memcpy(ctx->endpoint, epstart, len);
+	ctx->endpoint[len + 1] = 0;
+}
+
+void
 httpContext_clear(httpContext* ctx) {
-	ctx->http_method[0] = 0;
 	ctx->endpoint[0] = 0;
-	ctx->http_version[0] = 0;
-	ctx->errmsg[0] = 0;
-	ctx->route = 0;
 	ctx->params.len = 0;
 	ctx->rawparams[0] = 0;
+	// rawparams_cap We don't update capacity to 0.
 }
 
 // TODO inline Should be only 1 caller.
@@ -370,9 +376,9 @@ fillParams(httpContext* ctx) {
 		raw1 = qmark + 1;
 	}
 	size_t newLen = strlen(raw1);
-	if (newLen >= ctx->rawparams_len) {
-		ctx->rawparams_len = newLen * 2;
-		ctx->rawparams = realloc(ctx->rawparams, ctx->rawparams_len + 1);
+	if (newLen >= ctx->rawparams_cap) {
+		ctx->rawparams_cap = newLen * 2;
+		ctx->rawparams = realloc(ctx->rawparams, ctx->rawparams_cap + 1);
 	}
 	strncpy(ctx->rawparams, raw1, newLen + 1);
 	params_t_overwrite(ctx);
@@ -396,8 +402,9 @@ write_all(int socket, char* buffer, size_t len) {
 	return 0;
 }
 
-int // ok
-parse_route(u16 *route, char *endpoint) {
+int
+httpContext_get_route(httpContext* ctx) {
+	char* endpoint = ctx->endpoint;
 	if (endpoint[0] != '/') {
 		return 0;
 	}
@@ -407,8 +414,7 @@ parse_route(u16 *route, char *endpoint) {
 	if (start == endptr) {
 		return 0;
 	}
-	*route = (u16)out;
-	return 1;
+	return (int)out;
 }
 
 // Write HTTP response to client.
@@ -449,9 +455,8 @@ read_file_newstr(char* path) {
 
 // BEGIN Layer below request handlers.
 
-sstr*
-tr_of_every_account() {
-	sstr *out = sstr_new(512);
+void
+tr_of_every_account(char** out, u16* outcap) {
 	char* acc_types[4] = {
 		"Income",
 		"Expense",
@@ -461,19 +466,26 @@ tr_of_every_account() {
 
 	local_persist _Thread_local char* temp;
 	if (temp == NULL) { temp = malloc(90); }
+	u16 outlen = 0;
 	for (u16 i = 1; i <= Accs[0].id; i++) {
 		Account acc = Accs[i];
 		char* type = acc_types[acc.type];
 		int written = snprintf(temp, 90,
-			"<tr>" "<td>%hu</td>" "<td>%s</td>" "<td>%s</td>" "</tr>\n",
+			"<tr><td>%hu</td><td>%s</td><td>%s</td></tr>\n",
 			acc.id, acc.name, type);
 		if (written >= 90) {
 			printf("err. tr_of_every_account. written over 90 chars. id=%hu name=%s type=%s\n",
 					acc.id, acc.name, type);
 		}
-		sstr_append(out, temp);
+
+		u16 newlen = outlen + (u16)written;
+		if (newlen >= *outcap) {
+			*outcap = 2* newlen;
+			*out = realloc(*out, *outcap);
+		}
+		memcpy(&(*out)[outlen], temp, written);
+		outlen += written;
 	}
-	return out;
 }
 
 sstr*
@@ -772,9 +784,11 @@ listAccountsCache_write() {
 	local_persist char* template;
 	if (!template) { template = read_file_newstr("templates/listAccounts.html"); }
 	free(ListAccountsCache);
-	sstr* trs = tr_of_every_account();
-	asprintf(&ListAccountsCache, template, trs->buf);
-	sstr_free(trs);
+	static char* trs;
+	static u16 trs_cap = 1024;
+	if (trs == NULL) { trs = malloc(1024); }
+	tr_of_every_account(&trs, &trs_cap);
+	asprintf(&ListAccountsCache, template, trs);
 }
 // END Layer below request handlers.
 
@@ -1000,7 +1014,7 @@ createAccount(httpContext* request) {
 	acc_append(new_account_id, name2, (u16)type_i);
 	acc_append_file(new_account_id, name2, (u16)type_i);
 	write_redirect(request, 303, "/2");
-	free(name2); free(name); free(type);
+	free(name2);
 	listAccountsCache_write();
 	return;
 }
@@ -1090,29 +1104,10 @@ parse_request(httpContext* request) {
 		return 0;
 	}
 
-	char* first_line = calloc(1, 512);
-	memcpy(first_line, buf, line_len);
-	char* http_method = request->http_method;
-	char* endpoint = request->endpoint;
-	char* http_version = request->http_version;
-	int sscanf_result = sscanf(first_line, "%7s %255s %15s", http_method, endpoint, http_version);
-	if (sscanf_result != 3) {
-		write_to_client(request, 422, "Failed to parse HTTP line 1. Fix your request.");
-		free(first_line);
-		return 0;
-	}
-
-	int ok = parse_route(&request->route, endpoint);
-	if (!ok) {
-		write_to_client(request, 404, "Couldn't parse route from endpoint.");
-		free(first_line);
-		return 0;
-	}
-
+	httpContext_write_endpoint(request);
 	fillParams(request);
 	params_t_print(&request->params);
 
-	free(first_line);
 	return 1;
 }
 
@@ -1125,7 +1120,7 @@ handle_request(httpContext* request) {
 		return NULL;
 	}
 
-	switch (request->route) {
+	switch (httpContext_get_route(request)) {
 		case 1:
 			listLedger(request);
 			break;
@@ -1161,7 +1156,7 @@ threadpool_worker(void* arg) {
 	if (ctx == NULL) {
 		ctx = malloc(sizeof(httpContext));
 		ctx->rawparams = malloc(256);
-		ctx->rawparams_len = 256;
+		ctx->rawparams_cap = 256;
 		ctx->params.len = 0;
 		ctx->params.cap = 20;
 		ctx->params.list = malloc(20 * sizeof(struct param_t));
