@@ -17,9 +17,6 @@
 #define global_variable static
 #define THREAD_POOL_SIZE 4
 
-typedef uint16_t u16;
-typedef uint32_t u32;
-
 // Basic struct used for random multiple things.
 typedef struct {
 	char* name;
@@ -30,19 +27,19 @@ typedef struct {
 // Globals so many functions can write to this.
 global_variable FILE *AccountFile, *TxFile;
 typedef struct {
-	u16 id; // len
+	uint16_t id; // len
 	float amount;
 	char* note;
-	u16 debit_account_id; // cap
-	u16 credit_account_id;
-	u32 created_at;
+	uint16_t debit_account_id; // cap
+	uint16_t credit_account_id;
+	uint32_t created_at;
 } Tx;
 global_variable Tx *Txs; // This is 1-based. The 0th element is the sentinel value that captures length and capacity of the array, in the id and debit_account_id fields ints, respectively.
 
 Tx*
-tx_append(u16 id, float amount, char* note, u16 debit_account_id, u16 credit_account_id, u32 created_at) {
-	u16 *len = &Txs[0].id;
-	u16 *cap = &Txs[0].debit_account_id;
+tx_append(uint16_t id, float amount, char* note, uint16_t debit_account_id, uint16_t credit_account_id, uint32_t created_at) {
+	uint16_t *len = &Txs[0].id;
+	uint16_t *cap = &Txs[0].debit_account_id;
 	if (*len == *cap) {
 		*cap *= 2;
 		Txs = realloc(Txs, *cap * sizeof(Tx));
@@ -79,9 +76,9 @@ txs_compare_created_at_asc(const void* a, const void* b) {
 }
 
 typedef struct {
-	u16 id; // len
+	uint16_t id; // len
 	char* name;
-	u16 type; // cap
+	uint16_t type; // cap
 } Account;
 global_variable Account *Accs;
 
@@ -94,9 +91,9 @@ acc_compare_name_asc(const void* a, const void* b) {
 
 // Add an Account to the global array Accs. And then sort it by name ASC.
 void
-acc_append(u16 id, char* name, u16 type) {
-	u16 *len = &Accs[0].id;
-	u16 *cap = &Accs[0].type;
+acc_append(uint16_t id, char* name, uint16_t type) {
+	uint16_t *len = &Accs[0].id;
+	uint16_t *cap = &Accs[0].type;
 	if (*len == *cap) {
 		*cap *= 2;
 		Accs = realloc(Accs, *cap * sizeof(Account));
@@ -120,7 +117,7 @@ acc_find_by_name(char* needle) {
 }
 
 int
-acc_find_by_id(u16 needle) {
+acc_find_by_id(uint16_t needle) {
 	for (int i = 1; i <= Accs[0].id; i++) {
 		if (Accs[i].id == needle) {
 			return 1;
@@ -130,7 +127,7 @@ acc_find_by_id(u16 needle) {
 }
 
 void
-acc_append_file(u16 id, char* name, u16 type) {
+acc_append_file(uint16_t id, char* name, uint16_t type) {
 	fprintf(AccountFile, "%hu\t%s\t%hu\n", id, name, type);
 }
 
@@ -250,28 +247,12 @@ printStrInts(StrInt* in) {
 
 void
 printTxs(Tx* in) {
-	u16 len = in[0].id;
+	uint16_t len = in[0].id;
 	printf("Tx: len=%hu cap=%hu\n  Name\tInt1\tTotal\n", len, in[0].debit_account_id);
 	for (int i = 1; i <= len; i++) {
 		Tx it = in[i];
 		printf("%.2f\t%s\t%hu\t%hu\t%u\n", it.amount, it.note, it.debit_account_id, it.credit_account_id, it.created_at);
 	}
-}
-
-// TODO asprintf & strndup here are bad. Linear lookup not so bad, but there's a problem if looking for the last KV. Switch to parsing this all once, and produce either an array of KV structs (pointers can be to the existing data with the '&' & '=' converted to '0'), or a struct of 2 arrays, one of Ks and one of Vs. Then the lookup runs through the Ks, and pulls the V of the matching index. Of course, it should be thread_local.
-// Probably just use AoS, because SoA only helps when working with thousands of entities and this program will never get to that point for a single-user.
-char*
-params_get_newstr(char* haystack, char* needle) {
-	if (strlen(haystack) == 0) { return NULL; }
-	char* needle_with_US;
-	asprintf(&needle_with_US, "%s=", needle);
-	char* found = strstr(haystack, needle_with_US);
-	if (found == NULL) { return NULL; }
-	char* value = found + strlen(needle_with_US);
-	char* record_end = strchr(value, '&');
-	char* out = strndup(value, (size_t)(record_end - value));
-	free(needle_with_US);
-	return out;
 }
 
 struct param_t {
@@ -456,7 +437,7 @@ read_file_newstr(char* path) {
 // BEGIN Layer below request handlers.
 
 void
-tr_of_every_account(char** out, u16* outcap) {
+tr_of_every_account(char** out, uint16_t* outcap) {
 	char* acc_types[4] = {
 		"Income",
 		"Expense",
@@ -466,8 +447,8 @@ tr_of_every_account(char** out, u16* outcap) {
 
 	local_persist _Thread_local char* temp;
 	if (temp == NULL) { temp = malloc(90); }
-	u16 outlen = 0;
-	for (u16 i = 1; i <= Accs[0].id; i++) {
+	uint16_t outlen = 0;
+	for (uint16_t i = 1; i <= Accs[0].id; i++) {
 		Account acc = Accs[i];
 		char* type = acc_types[acc.type];
 		int written = snprintf(temp, 90,
@@ -478,7 +459,7 @@ tr_of_every_account(char** out, u16* outcap) {
 					acc.id, acc.name, type);
 		}
 
-		u16 newlen = outlen + (u16)written;
+		uint16_t newlen = outlen + (uint16_t)written;
 		if (newlen >= *outcap) {
 			*outcap = 2* newlen;
 			*out = realloc(*out, *outcap);
@@ -495,7 +476,7 @@ ledger_newest_30_newstr() {
 	// whole thing to memory, and we shouldn't recalc this every page-load.
 	char* temp = calloc(1024, 1);
 	Account (^account_with_id)(uint16_t) = ^(uint16_t x) {
-		u16 len = Accs[0].id;
+		uint16_t len = Accs[0].id;
 		for (int i = 1; i<=len; i++) {
 			Account acc = Accs[i];
 			if (acc.id == x) { return acc; }
@@ -503,7 +484,7 @@ ledger_newest_30_newstr() {
 		return Accs[0];
 	};
 	int total_rows = 30;
-	u16 *txLen = &Txs[0].id;
+	uint16_t *txLen = &Txs[0].id;
 	if (*txLen < 30) { total_rows = *txLen; }
 	for (int i = *txLen; i > *txLen - total_rows; i--) {
 		Tx tx = Txs[i];
@@ -575,36 +556,36 @@ void url_decode(char* str) {
 }
 
 void
-calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* nextLink, struct params_t* params) {
+calc_month(uint16_t *month, uint16_t *year, uint32_t *start, uint32_t* stop, char* prevLink, char* nextLink, struct params_t* params) {
 	char* mStr = params_t_get(params, "m");
 	char* yStr = params_t_get(params, "y");
 	if ((mStr == NULL) || (yStr == NULL)) {
 		time_t t1 = time(NULL); // Use current month & year
 		struct tm* t2 = localtime(&t1);
-		*year = (u16)(t2->tm_year + 1900);
-		*month = (u16)(t2->tm_mon + 1);
+		*year = (uint16_t)(t2->tm_year + 1900);
+		*month = (uint16_t)(t2->tm_mon + 1);
 	} else {
-		*month = (u16)atoi(mStr);
-		*year = (u16)atoi(yStr);
+		*month = (uint16_t)atoi(mStr);
+		*year = (uint16_t)atoi(yStr);
 	}
 	*start = (*year*10000) + (*month * 100) + 1;
-	u16 endMonth = *month + 1;
-	u16 endYear = *year;
+	uint16_t endMonth = *month + 1;
+	uint16_t endYear = *year;
 	if (endMonth == 13) {
 		endMonth = 1;
 		endYear = *year + 1;
 	}
-	*stop = (u32)((endYear * 10000) + (endMonth * 100) + 1);
+	*stop = (uint32_t)((endYear * 10000) + (endMonth * 100) + 1);
 
-	u16 prevYear = *year;
-	u16 prevMonth = *month - 1;
+	uint16_t prevYear = *year;
+	uint16_t prevMonth = *month - 1;
 	if (prevMonth == 0) {
 		prevMonth = 12;
 		prevYear--;
 	}
 	snprintf(prevLink, 12, "m=%hu&y=%hu", prevMonth, prevYear);
-	u16 nextYear = *year;
-	u16 nextMonth = *month + 1;
+	uint16_t nextYear = *year;
+	uint16_t nextMonth = *month + 1;
 	if (nextMonth == 13) {
 		nextMonth = 1;
 		nextYear++;
@@ -615,7 +596,7 @@ calc_month(u16 *month, u16 *year, u32 *start, u32* stop, char* prevLink, char* n
 char*
 incomeStatementTrsNew(StrInt* strints, int accType) {
 	int len = strints[0].int1;
-	u16 outLen = 0; u16 outCap = 2048; char* out = calloc(2048, 1);
+	uint16_t outLen = 0; uint16_t outCap = 2048; char* out = calloc(2048, 1);
 	char tr[128];
 	char* trTemplate = "";
 	switch (accType) {
@@ -653,14 +634,14 @@ compare_strint_desc(const void* a, const void* b) {
 }
 
 typedef struct {
-	u16 id;
+	uint16_t id;
 	float total;
 	char* name;
 } BsAccTotal;
 typedef struct {
 	BsAccTotal* data;
-	u16 len;
-	u16 cap;
+	uint16_t len;
+	uint16_t cap;
 } BsAccs;
 
 void
@@ -681,7 +662,7 @@ bs_accs_new() {
 	return out;
 }
 
-void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
+void bs_accs_append(BsAccs* bsAccs, uint16_t id, char* name) {
 	if (bsAccs->len == bsAccs->cap) {
 		bsAccs->cap *= 2;
 		bsAccs->data = realloc(bsAccs->data, bsAccs->cap * sizeof(BsAccTotal));
@@ -693,7 +674,7 @@ void bs_accs_append(BsAccs* bsAccs, u16 id, char* name) {
 }
 
 void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
-	for (u16 i = 1; i <= Accs[0].id; i++) {
+	for (uint16_t i = 1; i <= Accs[0].id; i++) {
 		Account acc = Accs[i];
 		switch (acc.type) {
 			case ASSET:
@@ -709,8 +690,8 @@ void bs_accs_populate_new(BsAccs *assets, BsAccs *liabilities) {
 }
 
 BsAccTotal*
-bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
-	for (u16 i=0; i<bsAccs->len; i++) {
+bs_accs_find_by_id(BsAccs* bsAccs, uint16_t id) {
+	for (uint16_t i=0; i<bsAccs->len; i++) {
 		BsAccTotal *it = &bsAccs->data[i];
 		if (it->id == id) {
 			return it;
@@ -719,9 +700,9 @@ bs_accs_find_by_id(BsAccs* bsAccs, u16 id) {
 	return NULL;
 }
 
-void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
-	u16 len = Txs[0].id;
-	for (u16 i=1; i <= len; i++) {
+void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, uint32_t stop) {
+	uint16_t len = Txs[0].id;
+	for (uint16_t i=1; i <= len; i++) {
 		Tx tx = Txs[i];
 		if (tx.created_at > stop) { continue; }
 
@@ -750,8 +731,8 @@ void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, u32 stop) {
 
 char*
 bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
-	u16 outLen=0; u16 outCap=1024; char* out= calloc(outCap, 1);
-	for (u16 i=0; i<Accs->len; i++) {
+	uint16_t outLen=0; uint16_t outCap=1024; char* out= calloc(outCap, 1);
+	for (uint16_t i=0; i<Accs->len; i++) {
 		BsAccTotal it = Accs->data[i];
 		if (outLen > outCap-90) {
 			outCap *=2;
@@ -773,7 +754,7 @@ bs_accs_trs_new(BsAccs* Accs, uint8_t accType) {
 		if (written > 89) {
 			printf("snprintf fail. name=%s total=%f\n", it.name, it.total);
 		}
-		outLen += (u16)written;
+		outLen += (uint16_t)written;
 	}
 	return out;
 }
@@ -785,7 +766,7 @@ listAccountsCache_write() {
 	if (!template) { template = read_file_newstr("templates/listAccounts.html"); }
 	free(ListAccountsCache);
 	static char* trs;
-	static u16 trs_cap = 1024;
+	static uint16_t trs_cap = 1024;
 	if (trs == NULL) { trs = malloc(1024); }
 	tr_of_every_account(&trs, &trs_cap);
 	asprintf(&ListAccountsCache, template, trs);
@@ -797,8 +778,8 @@ incomeStatement(httpContext* request) {
 	local_persist char *template;
 	if (!template) { template = read_file_newstr("templates/incomeStatement.html"); }
 
-	u16 month, year;
-	u32 start, stop;
+	uint16_t month, year;
+	uint32_t start, stop;
 	char prevLink[12], nextLink[12];
 	calc_month(&month, &year, &start, &stop, prevLink, nextLink, &request->params);
 
@@ -807,9 +788,9 @@ incomeStatement(httpContext* request) {
 	float netProfitDollars = 0;
 
 	// List of Tx that are in the time period.
-	u16 periodTxsLen = 0; u16 periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
-	u16 *txLen = &Txs[0].id;
-	for (u16 i = 1; i <= *txLen; i++) {
+	uint16_t periodTxsLen = 0; uint16_t periodTxsCap = 64; Tx* periodTxs = calloc(periodTxsCap, sizeof(Tx));
+	uint16_t *txLen = &Txs[0].id;
+	for (uint16_t i = 1; i <= *txLen; i++) {
 		Tx tx = Txs[i];
 		if ((tx.created_at < start) || (tx.created_at >= stop)) {
 			continue;
@@ -830,12 +811,12 @@ incomeStatement(httpContext* request) {
 	expenseAccs[0].int1 = 0; // Use this as array length
 	StrInt* newStrInt;
 
-	for (u16 i = 1; i <= Accs[0].id; i++) {
+	for (uint16_t i = 1; i <= Accs[0].id; i++) {
 		Account acc = Accs[i];
 		switch (acc.type) {
 			case INCOME:
 				tot = 0;
-				for (u16 i = 0; i < periodTxsLen; i++) {
+				for (uint16_t i = 0; i < periodTxsLen; i++) {
 					Tx tx = periodTxs[i];
 					if (tx.credit_account_id != acc.id) { continue; }
 					tot += tx.amount;
@@ -849,7 +830,7 @@ incomeStatement(httpContext* request) {
 				break;
 			case EXPENSE:
 				tot = 0;
-				for (u16 i = 0; i < periodTxsLen; i++) {
+				for (uint16_t i = 0; i < periodTxsLen; i++) {
 					Tx tx = periodTxs[i];
 					if (tx.debit_account_id != acc.id) { continue; }
 					tot += tx.amount;
@@ -901,40 +882,36 @@ createLedgerEntry(httpContext* request) {
 	char* amount = params_t_get(&request->params, "amount");
 	if ((debitID == NULL) || (creditID == NULL) || (note == NULL) || (amount == NULL)) {
 		write_to_client(request, 422, "Required params: [debit_account_id, credit_account_id, note, amount]");
-		free(debitID); free(creditID); free(note); free(amount);
-		// TODO change some of the above to thread_local static.
 		return;
 	}
-	u16 debit_i = (u16)atoi(debitID);
-	u16 credit_i = (u16)atoi(creditID);
+	uint16_t debit_i = (uint16_t)atoi(debitID);
+	uint16_t credit_i = (uint16_t)atoi(creditID);
 	if (debit_i == credit_i) {
 		write_to_client(request, 422, "debit_account_id & credit_account_id can't be the same");
-		free(debitID); free(creditID); free(note); free(amount);
 		return;
 	}
-	if (!acc_find_by_id((u16)debit_i)) {
+	if (!acc_find_by_id((uint16_t)debit_i)) {
 		char* out;
 		asprintf(&out, "debit_account_id=%d doesn't map to an existing account", debit_i);
 		write_to_client(request, 422, out);
-		free(out); free(debitID); free(creditID); free(note); free(amount);
+		free(out);
 		return;
 	}
-	if (!acc_find_by_id((u16)credit_i)) {
+	if (!acc_find_by_id((uint16_t)credit_i)) {
 		char* out;
 		asprintf(&out, "credit_account_id=%d doesn't map to an existing account", credit_i);
 		write_to_client(request, 422, out);
-		free(out); free(debitID); free(creditID); free(note); free(amount);
+		free(out);
 		return;
 	}
-	u16 newId = Txs[0].id + 1;
+	uint16_t newId = Txs[0].id + 1;
 	time_t t1 = time(NULL);
 	struct tm* t2 = localtime(&t1);
 	char timeBuf[9];
 	strftime(timeBuf, 9, "%Y%m%d", t2);
-	Tx* newTx = tx_append(newId, (float)atof(amount), note, (u16)atoi(debitID), (u16)atoi(creditID), (u32)atoi(timeBuf));
+	Tx* newTx = tx_append(newId, (float)atof(amount), note, (uint16_t)atoi(debitID), (uint16_t)atoi(creditID), (uint32_t)atoi(timeBuf));
 	tx_append_to_file(newTx);
 	write_redirect(request, 303, "/1");
-	free(debitID); free(creditID); free(note); free(amount);
 	return;
 }
 
@@ -946,7 +923,7 @@ updateTx(httpContext* request) {
 		write_to_client(request, 422, "Required params: [txid, newdate]\n");
 		return;
 	}
-	u16 txid_i = (u16)atoi(txid);
+	uint16_t txid_i = (uint16_t)atoi(txid);
 	Tx* found = NULL;
 	for (int i = 1; i <= Txs[0].id; i++) {
 		Tx it = Txs[i];
@@ -962,18 +939,18 @@ updateTx(httpContext* request) {
 		return;
 	}
 	printf("found=%hu\n", found->id);
-	u32 newdate_i = (u32)atoi(newdate);
+	uint32_t newdate_i = (uint32_t)atoi(newdate);
 	// TODO verify >20260101 and <20280101
 	found->created_at = newdate_i;
-	u16 len = Txs[0].id;
+	uint16_t len = Txs[0].id;
 	if (len > 1) {
 		qsort(&Txs[1], len, sizeof(Tx), txs_compare_created_at_asc);
-		for (u16 i = 1; i <= len; i++) {
+		for (uint16_t i = 1; i <= len; i++) {
 			Txs[i].id = i;
 		}
 		rewind(TxFile);
 		fprintf(TxFile, "id\tamount\tnote\tdebit_account_id\tcredit_account_id\tcreated_at\n");
-		for (u16 i = 1; i <= len; i++) {
+		for (uint16_t i = 1; i <= len; i++) {
 			tx_append_to_file(&Txs[i]);
 		}
 		fflush(TxFile);
@@ -1002,7 +979,7 @@ createAccount(httpContext* request) {
 		free(out); free(name2); free(name); free(type);
 		return;
 	}
-	u16 new_account_id = Accs[0].id + 1;
+	uint16_t new_account_id = Accs[0].id + 1;
 	int type_i = atoi(type);
 	if ((type_i > LIABILITY) || (type_i < INCOME)) {
 		char* out;
@@ -1011,8 +988,8 @@ createAccount(httpContext* request) {
 		free(out); free(name2); free(name); free(type);
 		return;
 	}
-	acc_append(new_account_id, name2, (u16)type_i);
-	acc_append_file(new_account_id, name2, (u16)type_i);
+	acc_append(new_account_id, name2, (uint16_t)type_i);
+	acc_append_file(new_account_id, name2, (uint16_t)type_i);
 	write_redirect(request, 303, "/2");
 	free(name2);
 	listAccountsCache_write();
@@ -1028,14 +1005,14 @@ listLedger(httpContext* request) {
 
 	// Memoize/Cache the option-tags from Accs.
 	local_persist char *aso;
-	local_persist u16 *last_known_id;
-	u16 accs_len = Accs[0].id;
+	local_persist uint16_t *last_known_id;
+	uint16_t accs_len = Accs[0].id;
 	if ((last_known_id == NULL) || (*last_known_id != accs_len)) {
 		size_t total_length = accs_len * 90;
 		size_t remaining_length = total_length;
 		aso = realloc(aso, total_length);
 		size_t written = 0;
-		for (u16 i = 1; i <= accs_len; i++) {
+		for (uint16_t i = 1; i <= accs_len; i++) {
 			Account acc = Accs[i];
 			int written_to_temp = snprintf(aso+written, remaining_length,
 					"<option value=\"%hu\">%s</option>",
@@ -1045,7 +1022,7 @@ listLedger(httpContext* request) {
 			written += (size_t)written_to_temp;
 			remaining_length -= (size_t)written_to_temp;
 		}
-		last_known_id = malloc(sizeof(u16));
+		last_known_id = malloc(sizeof(uint16_t));
 		*last_known_id = Accs[accs_len].id;
 	}
 
@@ -1066,8 +1043,8 @@ void
 balanceSheet(httpContext* request) {
 	local_persist char *template;
 	if (!template) { template = read_file_newstr("templates/balanceSheet.html"); }
-	u16 month, year;
-	u32 start, stop;
+	uint16_t month, year;
+	uint32_t start, stop;
 	char prevLink[12], nextLink[12];
 	calc_month(&month, &year, &start, &stop, prevLink, nextLink, &request->params);
 	char* body;
@@ -1199,7 +1176,7 @@ threadpool_worker(void* arg) {
 }
 
 int
-listen_on_port(u16 port) {
+listen_on_port(uint16_t port) {
 	int server_fd;
 	struct sockaddr_in address;
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1230,9 +1207,9 @@ load_filedata() {
 	Accs = calloc(128, sizeof(Account));
 	Accs[0].id = 0;
 	Accs[0].type = 127;
-	u16 id;
+	uint16_t id;
 	char* name = calloc(32, 1);
-	u16 type;
+	uint16_t type;
 	if (fgets(buf, 256, AccountFile) == NULL) { printf("AccountFile empty.\n"); exit(1); }
 	printf("Reading AccountFile. Headers:%s", buf);
 	while(fgets(buf, 256, AccountFile) != NULL) {
@@ -1251,9 +1228,9 @@ load_filedata() {
 	Txs[0].debit_account_id = 127;
 	float amount;
 	char* note = calloc(128, 1);
-	u16 debit_account_id;
-	u16 credit_account_id;
-	u32 created_at;
+	uint16_t debit_account_id;
+	uint16_t credit_account_id;
+	uint32_t created_at;
 	if (fgets(buf, 256, TxFile) == NULL) { printf("TxFile empty.\n"); exit(1); }
 	printf("Reading TxFile. Headers:%s", buf);
 	while(fgets(buf, 256, TxFile) != NULL) {
@@ -1300,7 +1277,7 @@ main(int argc, char** argv) {
 	}
 
 	socketqueue_init(&SocketQueue);
-	u16 port = (u16)atoi(argv[1]);
+	uint16_t port = (uint16_t)atoi(argv[1]);
 	char* dirpath = argv[2];
 	char* account_path;
 	asprintf(&account_path, "%saccounts.tsv", dirpath);
