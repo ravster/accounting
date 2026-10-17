@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <arpa/inet.h>
+#include <errno.h>
 
 #define local_persist static
 #define global_variable static
@@ -312,7 +313,6 @@ httpContext_clear(httpContext* ctx) {
 	// rawparams_cap We don't update capacity to 0.
 }
 
-// TODO inline Should be only 1 caller.
 void
 params_t_overwrite(httpContext* ctx) {
 	char* in = ctx->rawparams;
@@ -706,7 +706,6 @@ void bs_accs_calc_totals(BsAccs* bs_accs_a, BsAccs* bs_accs_l, uint32_t stop) {
 		Tx tx = Txs[i];
 		if (tx.created_at > stop) { continue; }
 
-		// TODO maybe bs_accs_a and bs_accs_l should be one array? Don't know. Pray on it.
 		BsAccTotal* bsacc = bs_accs_find_by_id(bs_accs_a, tx.debit_account_id);
 		if (bsacc) {
 			bsacc->total += tx.amount;
@@ -939,8 +938,25 @@ updateTx(httpContext* request) {
 		return;
 	}
 	printf("found=%hu\n", found->id);
-	uint32_t newdate_i = (uint32_t)atoi(newdate);
-	// TODO verify >20260101 and <20280101
+
+	// Parse and validate newdate
+	char* endptr;
+	errno = 0;
+	unsigned long parsedval = strtoul(newdate, &endptr, 10);
+	if ((endptr == newdate) || (*endptr != 0) || (errno != 0)) {
+		char* out;
+		asprintf(&out, "error: newdate: invalid format. Got errno=%d\n", errno);
+		write_to_client(request, 422, out);
+		return;
+	}
+	uint32_t newdate_i = (uint32_t)parsedval;
+	if ((newdate_i < 20260101) || (newdate_i >= 20280101)) {
+		char* out;
+		asprintf(&out, "error: newdate: invalid range. Should be between 20260101 & 20280101. Got=%hu", newdate_i);
+		write_to_client(request, 422, out);
+		return;
+	}
+
 	found->created_at = newdate_i;
 	uint16_t len = Txs[0].id;
 	if (len > 1) {
